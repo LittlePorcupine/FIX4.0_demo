@@ -53,8 +53,6 @@ public:
     // --- 3. 将事件处理函数声明为 public ---
     // --- 事件处理 ---
     void on_message_received(const FixMessage& msg);
-    void on_liveness_check();
-    void on_heartbeat_check();
     void on_io_error(const std::string& reason);
     void on_shutdown(const std::string& reason);
 
@@ -82,6 +80,7 @@ private:
 
     // --- 事件处理 (已移至 public) ---
     // void process_event(const Event& event);
+    void on_timer_check(); // 新增
 
     // --- 状态更新辅助函数 ---
     // void on_message_received(const FixMessage& msg); // 已移动

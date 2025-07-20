@@ -90,36 +90,36 @@ void Session::on_message_received(const FixMessage& msg) {
     }
 }
 
-void Session::on_liveness_check() {
+// 1. 移除 on_liveness_check 和 on_heartbeat_check，用 on_timer_check 替代
+void Session::on_timer_check() {
     std::lock_guard<std::recursive_mutex> lock(state_mutex_);
     if (!running_) return;
 
     auto now = std::chrono::steady_clock::now();
-    if (std::chrono::duration_cast<std::chrono::seconds>(now - lastRecv).count() >= (heartBtInt * 3 / 2)) {
-        if (!awaitingTestReqId.empty()) {
-            // 已经发送过测试请求但尚未收到回应
-            // 这将在 on_heartbeat_check 中处理
-            return;
-        }
+    auto seconds_since_recv = std::chrono::duration_cast<std::chrono::seconds>(now - lastRecv).count();
+    auto seconds_since_send = std::chrono::duration_cast<std::chrono::seconds>(now - lastSend).count();
+
+    // 检查是否已发送 TestRequest 并超时
+    if (!awaitingTestReqId.empty() && seconds_since_recv >= static_cast<long>(heartBtInt * 1.5)) {
+        perform_shutdown("TestRequest timeout. No response from peer.");
+        return; // 执行了关闭操作，直接返回
+    }
+
+    // 检查是否需要发送 TestRequest (例如，1.2 倍心跳间隔未收到任何消息)
+    if (seconds_since_recv >= static_cast<long>(heartBtInt * 1.2) && awaitingTestReqId.empty()) {
         awaitingTestReqId = "TestReq_" +
             std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
         send_test_request(awaitingTestReqId);
-    }
-}
-
-void Session::on_heartbeat_check() {
-    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-    if (!running_) return;
-
-    auto now = std::chrono::steady_clock::now();
-    if (std::chrono::duration_cast<std::chrono::seconds>(now - lastRecv).count() >= (heartBtInt * 2)) {
-        perform_shutdown("No heartbeat from peer.");
+        return; // 执行了发送 TestRequest, 本次检查结束
     }
 
-    if (std::chrono::duration_cast<std::chrono::seconds>(now - lastSend).count() >= heartBtInt) {
+    // 检查是否需要发送 Heartbeat (距离上次发送超过一个心跳间隔)
+    // 这个检查必须在 TestRequest 逻辑之后，确保不会在等待响应时发送心跳
+    if (seconds_since_send >= heartBtInt) {
         send_heartbeat();
     }
 }
+
 
 void Session::on_io_error(const std::string& reason) {
     perform_shutdown("I/O Error: " + reason);
@@ -141,25 +141,21 @@ void Session::schedule_timer_tasks(TimingWheel* wheel) {
 
     std::weak_ptr<Session> weak_self = shared_from_this();
 
-    auto liveness_task = std::make_shared<std::function<void()>>();
-    auto heartbeat_task = std::make_shared<std::function<void()>>();
+    // 2. 创建一个统一的定时任务
+    auto timer_task = std::make_shared<std::function<void()>>();
 
-    *heartbeat_task = [weak_self, wheel, heartbeat_task]() {
+    *timer_task = [weak_self, wheel, timer_task]() {
         if (auto self = weak_self.lock()) {
-            self->on_heartbeat_check();
-            wheel->add_task(self->heartBtInt * 1000, *heartbeat_task);
+            if (self->is_running()) {
+                self->on_timer_check();
+                // 重新调度自己
+                wheel->add_task(self->heartBtInt * 1000, *timer_task);
+            }
         }
     };
 
-    *liveness_task = [weak_self, wheel, liveness_task]() {
-        if (auto self = weak_self.lock()) {
-            self->on_liveness_check();
-            wheel->add_task(self->heartBtInt * 1000, *liveness_task);
-        }
-    };
-
-    wheel->add_task(heartBtInt * 1000, *heartbeat_task);
-    wheel->add_task(heartBtInt * 1000, *liveness_task);
+    // 3. 只添加这一个统一的任务
+    wheel->add_task(heartBtInt * 1000, *timer_task);
 }
 
 void Session::perform_shutdown(const std::string& reason) {
