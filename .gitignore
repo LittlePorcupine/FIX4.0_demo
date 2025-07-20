@@ -1,0 +1,11 @@
+# VSCode specific
+.vscode/
+
+# Build artifacts
+build/
+
+# macOS specific
+.DS_Store
+
+# Project specific
+进度.txt 
