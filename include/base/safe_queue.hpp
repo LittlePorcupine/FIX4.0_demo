@@ -59,4 +59,4 @@ private:
     bool stop_;
 };
 
-} // namespace fix40 
+} // namespace fix40

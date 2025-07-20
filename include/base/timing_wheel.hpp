@@ -43,7 +43,7 @@ public:
         int ticks_to_wait = (delay_ms + tick_interval_ms_ - 1) / tick_interval_ms_; // Ceiling division
 
         std::lock_guard<std::mutex> lock(mutex_);
-        
+
         int remaining_laps = (ticks_to_wait - 1) / wheel_size_;
         int target_slot = (current_tick_ + ticks_to_wait) % wheel_size_;
 
@@ -60,12 +60,12 @@ public:
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            
+
             current_tick_ = (current_tick_ + 1) % wheel_size_;
             // current_tick_val = current_tick_; // No longer needed
 
             auto& slot_tasks = wheel_[current_tick_];
-            
+
             for (auto it = slot_tasks.begin(); it != slot_tasks.end(); /* no increment */) {
                 if (it->remaining_laps > 0) {
                     it->remaining_laps--;
@@ -76,7 +76,7 @@ public:
                 }
             }
         }
-        
+
         /* This was the diagnostic log
         if (!tasks_to_run.empty()) {
             std::cout << "[TimingWheel] Tick " << current_tick_val << ", executing " << tasks_to_run.size() << " tasks." << std::endl;
@@ -103,4 +103,4 @@ private:
     std::mutex mutex_;
 };
 
-} // namespace fix40 
+} // namespace fix40

@@ -26,4 +26,4 @@ constexpr int Text = 58;
 constexpr int CheckSum = 10;
 
 } // namespace tags
-} // namespace fix40 
+} // namespace fix40

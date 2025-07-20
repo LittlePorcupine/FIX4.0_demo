@@ -17,7 +17,7 @@ public:
     ~ThreadPool();
 
     template<class F, class... Args>
-    auto enqueue(F&& f, Args&&... args) 
+    auto enqueue(F&& f, Args&&... args)
         -> std::future<std::invoke_result_t<F, Args...>>;
 
     size_t get_thread_count() const;
@@ -25,7 +25,7 @@ public:
 private:
     std::vector<std::thread> workers_;
     SafeQueue<std::function<void()>> tasks_;
-    
+
     std::atomic<bool> stop_;
     size_t thread_count_;
 };
@@ -44,15 +44,15 @@ inline ThreadPool::ThreadPool(size_t threads) : stop_(false), thread_count_(thre
 }
 
 template<class F, class... Args>
-auto ThreadPool::enqueue(F&& f, Args&&... args) 
+auto ThreadPool::enqueue(F&& f, Args&&... args)
     -> std::future<std::invoke_result_t<F, Args...>> {
-    
+
     using return_type = std::invoke_result_t<F, Args...>;
 
     auto task = std::make_shared<std::packaged_task<return_type()>>(
         std::bind(std::forward<F>(f), std::forward<Args>(args)...)
     );
-        
+
     std::future<return_type> res = task->get_future();
 
     if(stop_) {
@@ -75,4 +75,4 @@ inline ThreadPool::~ThreadPool() {
     }
 }
 
-} // namespace fix40 
+} // namespace fix40

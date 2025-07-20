@@ -20,11 +20,11 @@ class Session : public std::enable_shared_from_this<Session> {
 public:
     using ShutdownCallback = std::function<void()>; // No longer needs to pass fd
 
-    Session(const std::string& sender, 
-            const std::string& target, 
-            int hb, 
+    Session(const std::string& sender,
+            const std::string& target,
+            int hb,
             ShutdownCallback shutdown_cb);
-    
+
     ~Session();
 
     // New method to link session to its connection
@@ -38,32 +38,32 @@ public:
     // 公共的发送接口: 编码并尝试直接发送
     void send(FixMessage& msg);
     // 新增: 用于处理写事件，发送缓冲区中的数据
-    void send_buffered_data();
+    void handle_write_ready();
+
+    // 新增: 为 Connection 提供与 outbound_q_ 交互的接口
+    void enqueue_raw_for_send(std::string&& raw_msg);
+    bool is_outbound_queue_empty() const;
 
 
     // 移除 post_event
     // void post_event(Event event);
-    
+
     // --- 3. 将事件处理函数声明为 public ---
     // --- 事件处理 ---
     void on_message_received(const FixMessage& msg);
     void on_liveness_check();
     void on_heartbeat_check();
     void on_io_error(const std::string& reason);
-    void on_shutdown(const std::string& reason);
+    void on_shutdown([[maybe_unused]] const std::string& reason);
 
     // 新增: 调度周期性的会话定时任务
     void schedule_timer_tasks(TimingWheel* wheel);
 
     const std::string senderCompID;
     const std::string targetCompID;
-    
+
     // 移至 public，以便 Worker 线程可以访问
     FixCodec codec_;
-    
-    // --- 1. 将需要从外部访问的成员移至 public ---
-    // outbound_q_ 的类型从 FixMessage 改为 string，存储编码后的原始消息
-    SafeQueue<std::string> outbound_q_;
 
 private:
     std::atomic<bool> shutting_down_{false}; // 1. 新增 shutting_down 标志
@@ -72,7 +72,7 @@ private:
     std::recursive_mutex state_mutex_;
 
     // --- 线程主函数 (将被移除) ---
-    // void run_processor(); 
+    // void run_processor();
     // void run_sender(); // 1. 移除 run_sender 声明
 
     // --- 事件处理 (已移至 public) ---
@@ -90,7 +90,7 @@ private:
     void send_test_request(const std::string& id);
 
     // FixCodec codec_; // MOVED TO PUBLIC
-    
+
     // 调整成员变量的声明顺序以匹配构造函数的初始化顺序，修复 -Wreorder 警告
     const int heartBtInt;
     ShutdownCallback shutdown_callback_;
@@ -99,7 +99,7 @@ private:
     // std::thread sender_thread_; // 2. 移除 sender_thread_
 
     // SafeQueue<Event> event_q_;
-    // SafeQueue<std::string> outbound_q_; // MOVED TO PUBLIC
+    SafeQueue<std::string> outbound_q_;
 
     std::atomic<bool> running_{false};
 
@@ -111,4 +111,4 @@ private:
     std::chrono::steady_clock::time_point lastSend;
 };
 
-} // namespace fix40 
+} // namespace fix40

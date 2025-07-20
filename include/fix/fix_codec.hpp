@@ -92,7 +92,7 @@ public:
 
         // 3. 构造报文体 (Body) —— 仅业务字段
         std::string body_str = build_body_from_message(msg);
-        
+
         std::string header_rest = header_rest_ss.str();
 
         // 4. 计算 BodyLength （从 35= 起始到 CheckSum 前一个 SOH）
@@ -162,7 +162,7 @@ public:
 private:
     std::string build_body_from_message(const FixMessage& msg) const {
         std::ostringstream body;
-        
+
         // 定义哪些 tag 属于 Body，并按 tag 升序排列以提高一致性
         std::vector<int> body_tags;
         for (const auto& pair : msg.get_fields()) {
@@ -201,4 +201,4 @@ private:
     }
 };
 
-} // namespace fix40 
+} // namespace fix40

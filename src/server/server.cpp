@@ -14,21 +14,17 @@
 #include "core/connection.hpp"
 #include "fix/session.hpp"
 
-namespace {
-    // A global pointer to the reactor for the signal handler.
-    // This is a common pattern for signal handling in C++. A more
-    // sophisticated design might use a static member or a singleton.
-    fix40::Reactor* g_reactor_for_signal = nullptr;
-}
+namespace fix40 {
 
-void shutdown_handler(int signum) {
+// Initialize the static pointer.
+FixServer* FixServer::instance_for_signal_ = nullptr;
+
+void FixServer::signal_handler(int signum) {
     std::cout << "\nCaught signal " << signum << ". Shutting down gracefully..." << std::endl;
-    if (g_reactor_for_signal) {
-        g_reactor_for_signal->stop();
+    if (instance_for_signal_ && instance_for_signal_->reactor_) {
+        instance_for_signal_->reactor_->stop();
     }
 }
-
-namespace fix40 {
 
 FixServer::FixServer(int port, int num_threads)
     : port_(port), listen_fd_(-1) {
@@ -37,10 +33,10 @@ FixServer::FixServer(int port, int num_threads)
     reactor_ = std::make_unique<Reactor>();
     timing_wheel_ = std::make_unique<TimingWheel>(60, 1000); // 60 slots, 1s interval
 
-    g_reactor_for_signal = reactor_.get();
+    instance_for_signal_ = this;
 
     // Setup the main timer that drives the timing wheel
-    reactor_->add_timer(1000, [this](int timer_fd) {
+    reactor_->add_timer(1000, [this]([[maybe_unused]] int timer_fd) {
 #ifdef __linux__
         // On Linux, timerfd needs to be drained
         uint64_t expirations;
@@ -77,13 +73,13 @@ FixServer::~FixServer() {
         reactor_->stop();
     }
     close(listen_fd_);
-    g_reactor_for_signal = nullptr;
+    instance_for_signal_ = nullptr;
     std::cout << "FixServer destroyed." << std::endl;
 }
 
 void FixServer::start() {
-    signal(SIGINT, shutdown_handler);
-    signal(SIGTERM, shutdown_handler);
+    signal(SIGINT, FixServer::signal_handler);
+    signal(SIGTERM, FixServer::signal_handler);
 
     // Add server socket to reactor to accept new connections
     reactor_->add_fd(listen_fd_, [this](int) {
@@ -128,7 +124,7 @@ void FixServer::start() {
             break;
         }
     }
-    
+
     std::cout << "All sessions closed." << std::endl;
     std::cout << "Server shut down gracefully." << std::endl;
 }
@@ -142,7 +138,7 @@ void FixServer::on_new_connection(int fd) {
             this->on_connection_close(fd);
         });
     };
-    
+
     // Create the session and connection, then link them together.
     auto session = std::make_shared<Session>("SERVER", "CLIENT", 30, on_conn_close);
     auto connection = std::make_shared<Connection>(fd, reactor_.get(), session);
@@ -155,7 +151,7 @@ void FixServer::on_new_connection(int fd) {
 
     session->start();
     session->schedule_timer_tasks(timing_wheel_.get());
-    
+
     reactor_->add_fd(fd, [connection](int) {
         connection->handle_read();
     });
@@ -171,4 +167,4 @@ void FixServer::on_connection_close(int fd) {
     }
 }
 
-} // namespace fix40 
+} // namespace fix40

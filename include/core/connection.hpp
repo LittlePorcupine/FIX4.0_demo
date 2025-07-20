@@ -14,16 +14,18 @@ class Reactor;
 
 class Connection : public std::enable_shared_from_this<Connection> {
 public:
+    static constexpr size_t kMaxReadBufferSize = 1 * 1024 * 1024; // 1 MB
+
     Connection(int fd, Reactor* reactor, std::shared_ptr<Session> session);
     ~Connection();
 
     void handle_read();
     void handle_write();
     void send(std::string_view data);
-    
+
     // Initiates a graceful shutdown of the connection.
     void shutdown();
-    
+
     // Immediately closes the file descriptor.
     void close_fd();
 
@@ -39,4 +41,4 @@ private:
     std::string read_buffer_;
 };
 
-} // namespace fix40 
+} // namespace fix40

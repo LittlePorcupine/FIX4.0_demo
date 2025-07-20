@@ -67,7 +67,7 @@ inline Reactor::Reactor() : running_(false) {
     if (pipe(pipe_fd_) == -1) {
         throw std::runtime_error("Failed to create pipe for reactor shutdown");
     }
-    
+
     // Add pipe's read end to be monitored
     add_fd(pipe_fd_[0], nullptr); // No callback needed, just for wakeup
 }
@@ -118,7 +118,7 @@ inline bool Reactor::modify_fd(int fd, uint32_t event_mask, FdCallback write_cb)
     if (event_mask & EventType::WRITE) {
         event.events |= EPOLLOUT;
     }
-    
+
     if (epoll_ctl(io_fd_, EPOLL_CTL_MOD, fd, &event) == -1) {
         // ENOENT means the fd is not in epoll, maybe it was closed.
         // In this case, MOD fails. It's not a fatal error for this logic.
@@ -262,13 +262,13 @@ inline void Reactor::run() {
             if (events[i].filter == EVFILT_TIMER) {
                 // Special handling for timer, treat as read-like event for dispatch
                 fd = -static_cast<int>(events[i].ident);
-                active_events |= EventType::READ; 
+                active_events |= EventType::READ;
             }
 #endif
             if (fd == pipe_fd_[0]) {
                 char buf[1];
                 read(pipe_fd_[0], buf, 1);
-                continue; 
+                continue;
             }
 
             // 6. 根据事件类型分发回调
@@ -317,4 +317,4 @@ inline void Reactor::run() {
     }
 }
 
-} // namespace fix40 
+} // namespace fix40

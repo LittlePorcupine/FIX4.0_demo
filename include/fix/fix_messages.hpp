@@ -14,7 +14,7 @@ inline FixMessage create_logon_message(const std::string& sender,
                                        int heart_bt = 30) {
     FixMessage logon;
     logon.set(tags::MsgType, "A");
-    logon.set(tags::EncryptMethod, "0"); 
+    logon.set(tags::EncryptMethod, "0");
     logon.set(tags::HeartBtInt, heart_bt);
     logon.set(tags::SenderCompID, sender);
     logon.set(tags::TargetCompID, target);
@@ -38,7 +38,7 @@ inline FixMessage create_heartbeat_message(const std::string& sender,
     if (!test_req_id.empty()) {
         hb.set(tags::TestReqID, test_req_id);
     }
-    
+
     return hb;
 }
 

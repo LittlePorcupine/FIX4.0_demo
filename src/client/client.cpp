@@ -32,30 +32,30 @@ Client::~Client() {
 
 bool Client::connect(const std::string& ip, int port) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) { 
-        std::cerr << "Socket creation error" << std::endl; 
-        return false; 
+    if (sock < 0) {
+        std::cerr << "Socket creation error" << std::endl;
+        return false;
     }
 
     sockaddr_in serv_addr{};
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0) { 
-        std::cerr << "Invalid address" << std::endl; 
+    if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0) {
+        std::cerr << "Invalid address" << std::endl;
         close(sock);
-        return false; 
+        return false;
     }
-    if (::connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) { 
-        std::cerr << "Connection Failed" << std::endl; 
+    if (::connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        std::cerr << "Connection Failed" << std::endl;
         close(sock);
-        return false; 
+        return false;
     }
-    
+
     fcntl(sock, F_SETFL, O_NONBLOCK);
     std::cout << "Connected to server." << std::endl;
 
     // Setup the main timer that drives the timing wheel
-    reactor_->add_timer(1000, [this](int timer_fd) {
+    reactor_->add_timer(1000, [this]([[maybe_unused]] int timer_fd) {
 #ifdef __linux__
         uint64_t expirations;
         read(timer_fd, &expirations, sizeof(expirations));
@@ -70,7 +70,7 @@ bool Client::connect(const std::string& ip, int port) {
     session_ = std::make_shared<Session>("CLIENT", "SERVER", 30, close_cb);
     connection_ = std::make_shared<Connection>(sock, reactor_.get(), session_);
     session_->set_connection(connection_); // Set the back-reference
-    
+
     session_->start();
     session_->schedule_timer_tasks(timing_wheel_.get());
 
@@ -82,7 +82,7 @@ bool Client::connect(const std::string& ip, int port) {
             if(connection_) connection_->handle_read();
         });
     });
-    
+
     auto logon = create_logon_message("CLIENT", "SERVER", 1, 30);
     session_->send(logon);
     std::cout << "Logon message sent." << std::endl;
@@ -122,4 +122,4 @@ void Client::on_connection_close() {
     if(reactor_) reactor_->stop();
 }
 
-} // namespace fix40 
+} // namespace fix40
