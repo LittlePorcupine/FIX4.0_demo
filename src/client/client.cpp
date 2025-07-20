@@ -55,10 +55,10 @@ bool Client::connect(const std::string& ip, int port) {
     std::cout << "Connected to server." << std::endl;
 
     // Setup the main timer that drives the timing wheel
-    reactor_->add_timer(1000, [this](int) {
+    reactor_->add_timer(1000, [this](int timer_fd) {
 #ifdef __linux__
         uint64_t expirations;
-        read(this->reactor_->get_timer_fd(), &expirations, sizeof(expirations));
+        read(timer_fd, &expirations, sizeof(expirations));
 #endif
         timing_wheel_->tick();
     });

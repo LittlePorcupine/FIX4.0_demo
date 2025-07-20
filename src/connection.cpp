@@ -20,6 +20,7 @@ Connection::~Connection() {
     // The socket is closed by the OS when the fd is closed, 
     // but calling shutdown can provide a more graceful disconnection.
     // We remove it from the reactor elsewhere.
+    close(fd_);
 }
 
 void Connection::handle_read() {

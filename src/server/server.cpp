@@ -40,11 +40,11 @@ FixServer::FixServer(int port, int num_threads)
     g_reactor_for_signal = reactor_.get();
 
     // Setup the main timer that drives the timing wheel
-    reactor_->add_timer(1000, [this](int) {
+    reactor_->add_timer(1000, [this](int timer_fd) {
 #ifdef __linux__
         // On Linux, timerfd needs to be drained
         uint64_t expirations;
-        read(this->reactor_->get_timer_fd(), &expirations, sizeof(expirations));
+        read(timer_fd, &expirations, sizeof(expirations));
 #endif
         this->timing_wheel_->tick();
     });
@@ -111,8 +111,12 @@ void FixServer::start() {
     }
 
     // A simple wait for connections to close. A more robust server might have a timeout.
-    while (!connections_.empty()) {
+    while (true) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        if (connections_.empty()) {
+            break;
+        }
     }
     
     std::cout << "All sessions closed." << std::endl;
@@ -134,7 +138,10 @@ void FixServer::on_new_connection(int fd) {
     auto connection = std::make_shared<Connection>(fd, reactor_.get(), session);
     session->set_connection(connection); // Set the back-reference
 
-    connections_[fd] = connection;
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        connections_[fd] = connection;
+    }
 
     session->start();
     session->schedule_timer_tasks(timing_wheel_.get());
@@ -145,6 +152,7 @@ void FixServer::on_new_connection(int fd) {
 }
 
 void FixServer::on_connection_close(int fd) {
+    std::lock_guard<std::mutex> lock(connections_mutex_);
     auto it = connections_.find(fd);
     if (it != connections_.end()) {
         it->second->shutdown();

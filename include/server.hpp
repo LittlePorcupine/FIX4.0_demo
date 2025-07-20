@@ -3,6 +3,7 @@
 #include <memory>
 #include <unordered_map>
 #include <string>
+#include <mutex>
 
 namespace fix40 {
 
@@ -31,6 +32,7 @@ private:
     std::unique_ptr<TimingWheel> timing_wheel_;
 
     std::unordered_map<int, std::shared_ptr<Connection>> connections_;
+    std::mutex connections_mutex_;
 };
 
 } // namespace fix40 
