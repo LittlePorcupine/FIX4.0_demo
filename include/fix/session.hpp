@@ -5,7 +5,7 @@
 #include <thread>
 #include <atomic>
 #include <functional>
-#include <memory> // For weak_ptr
+#include <memory> // 以便使用 weak_ptr
 
 #include "fix/fix_codec.hpp"
 // #include "fix_events.hpp" // 2. 不再需要 events
@@ -18,7 +18,7 @@ class Connection;
 
 class Session : public std::enable_shared_from_this<Session> {
 public:
-    using ShutdownCallback = std::function<void()>; // No longer needs to pass fd
+    using ShutdownCallback = std::function<void()>; // 不再需要传 fd
 
     Session(const std::string& sender,
             const std::string& target,
@@ -27,7 +27,7 @@ public:
 
     ~Session();
 
-    // New method to link session to its connection
+    // 新方法：将 Session 和 Connection 关联
     void set_connection(std::weak_ptr<Connection> conn);
 
     void start();
@@ -94,7 +94,7 @@ private:
     // 调整成员变量的声明顺序以匹配构造函数的初始化顺序，修复 -Wreorder 警告
     const int heartBtInt;
     ShutdownCallback shutdown_callback_;
-    std::weak_ptr<Connection> connection_; // Replaces SendCallback
+    std::weak_ptr<Connection> connection_; // 取代 SendCallback
 
     // std::thread sender_thread_; // 2. 移除 sender_thread_
 
@@ -110,4 +110,4 @@ private:
     std::chrono::steady_clock::time_point lastRecv;
     std::chrono::steady_clock::time_point lastSend;
 };
-} // namespace fix40
+} // fix40 名称空间结束

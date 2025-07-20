@@ -16,7 +16,7 @@
 
 namespace fix40 {
 
-// Initialize the static pointer.
+// 初始化静态指针
 FixServer* FixServer::instance_for_signal_ = nullptr;
 
 void FixServer::signal_handler(int signum) {
@@ -31,14 +31,14 @@ FixServer::FixServer(int port, int num_threads)
 
     worker_pool_ = std::make_unique<ThreadPool>(num_threads > 0 ? num_threads : std::thread::hardware_concurrency());
     reactor_ = std::make_unique<Reactor>();
-    timing_wheel_ = std::make_unique<TimingWheel>(60, 1000); // 60 slots, 1s interval
+    timing_wheel_ = std::make_unique<TimingWheel>(60, 1000); // 60 个槽，间隔 1 秒
 
     instance_for_signal_ = this;
 
-    // Setup the main timer that drives the timing wheel
+    // 设置驱动时钟轮的主定时器
     reactor_->add_timer(1000, [this]([[maybe_unused]] int timer_fd) {
 #ifdef __linux__
-        // On Linux, timerfd needs to be drained
+        // Linux 上需要清空 timerfd
         uint64_t expirations;
         read(timer_fd, &expirations, sizeof(expirations));
 #endif
@@ -68,7 +68,7 @@ FixServer::FixServer(int port, int num_threads)
 }
 
 FixServer::~FixServer() {
-    // The unique_ptrs will handle deletion, but ensure a clean shutdown.
+    // unique_ptr 会自动释放资源，但仍需确保干净关闭
     if (reactor_ && reactor_->is_running()) {
         reactor_->stop();
     }
@@ -81,7 +81,7 @@ void FixServer::start() {
     signal(SIGINT, FixServer::signal_handler);
     signal(SIGTERM, FixServer::signal_handler);
 
-    // Add server socket to reactor to accept new connections
+    // 将服务器端口 fd 添入 reactor 以接受新连接
     reactor_->add_fd(listen_fd_, [this](int) {
         sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
@@ -96,13 +96,13 @@ void FixServer::start() {
         on_new_connection(client_fd);
     });
 
-    reactor_->run(); // This will block until stop() is called
+    reactor_->run(); // 此调用会阻塞直到调用 stop()
 
-    // --- Graceful Shutdown Logic ---
+    // --- 优雅关闭逻辑 ---
     std::cout << "Reactor stopped. Closing listener and shutting down sessions..." << std::endl;
     reactor_->remove_fd(listen_fd_);
 
-    // Safely get a list of connections to shutdown
+    // 安全地获取将要关闭的连接
     std::vector<std::shared_ptr<Connection>> conns_to_shutdown;
     {
         std::lock_guard<std::mutex> lock(connections_mutex_);
@@ -111,12 +111,12 @@ void FixServer::start() {
         }
     }
 
-    // Now, shutdown the sessions without holding the lock
+    // 现在不持锁关闭会话
     for (const auto& conn : conns_to_shutdown) {
         conn->session()->on_shutdown("Server is shutting down");
     }
 
-    // A simple wait for connections to close. A more robust server might have a timeout.
+    // 简单地等待连接关闭，更健壮的服务器可能会设置超时
     while (true) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         std::lock_guard<std::mutex> lock(connections_mutex_);
@@ -139,10 +139,10 @@ void FixServer::on_new_connection(int fd) {
         });
     };
 
-    // Create the session and connection, then link them together.
+    // 创建 session 和 connection，然后将它们链接
     auto session = std::make_shared<Session>("SERVER", "CLIENT", 30, on_conn_close);
     auto connection = std::make_shared<Connection>(fd, reactor_.get(), session);
-    session->set_connection(connection); // Set the back-reference
+    session->set_connection(connection); // 定位反向引用
 
     {
         std::lock_guard<std::mutex> lock(connections_mutex_);
@@ -166,4 +166,4 @@ void FixServer::on_connection_close(int fd) {
         std::cout << "Cleaned up resources for fd: " << fd << std::endl;
     }
 }
-} // namespace fix40
+} // fix40 名称空间结束

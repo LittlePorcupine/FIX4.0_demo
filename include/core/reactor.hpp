@@ -10,13 +10,13 @@
 #include <cstring>
 #include <iostream>
 
-// --- Platform-specific includes for I/O multiplexing ---
+// --- 面向各平台的 I/O 多路处理包含 ---
 #ifdef __linux__
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
 #elif __APPLE__
 #include <sys/event.h>
-#include <sys/time.h> // For timer
+#include <sys/time.h> // 为了定时器
 #else
 #error "Unsupported platform for Reactor"
 #endif
@@ -45,8 +45,8 @@ public:
     bool is_running() const;
 
 private:
-    int io_fd_; // Generic fd for epoll or kqueue
-    int pipe_fd_[2]; // Pipe for shutdown signal
+    int io_fd_; // epoll 或 kqueue 的通用 fd
+    int pipe_fd_[2]; // 用于关闭信号的管道
     std::atomic<bool> running_;
     std::unordered_map<int, FdCallback> callbacks_;
     std::unordered_map<int, FdCallback> write_callbacks_; // 3. 新增写回调 map
@@ -54,7 +54,7 @@ private:
     std::vector<int> timer_fds_;
 };
 
-// --- Implementation ---
+// --- 实现 ---
 
 inline Reactor::Reactor() : running_(false) {
 #ifdef __linux__
@@ -68,8 +68,8 @@ inline Reactor::Reactor() : running_(false) {
         throw std::runtime_error("Failed to create pipe for reactor shutdown");
     }
 
-    // Add pipe's read end to be monitored
-    add_fd(pipe_fd_[0], nullptr); // No callback needed, just for wakeup
+    // 将管道的读端缓存到监听列表
+    add_fd(pipe_fd_[0], nullptr); // 不需要回调，只为了唤醒
 }
 
 inline Reactor::~Reactor() {
@@ -84,7 +84,7 @@ inline Reactor::~Reactor() {
 inline bool Reactor::add_fd(int fd, FdCallback cb) {
 #ifdef __linux__
     epoll_event event;
-    event.events = EPOLLIN | EPOLLET; // Default to read, edge-triggered
+    event.events = EPOLLIN | EPOLLET; // 默认为读事件，边缘触发
     event.data.fd = fd;
     if (epoll_ctl(io_fd_, EPOLL_CTL_ADD, fd, &event) == -1) {
         perror("epoll_ctl(ADD) failed");
@@ -92,7 +92,7 @@ inline bool Reactor::add_fd(int fd, FdCallback cb) {
     }
 #elif __APPLE__
     struct kevent change_event;
-    // Default to read, edge-triggered (EV_CLEAR)
+    // 默认为读事件，边缘触发（EV_CLEAR）
     EV_SET(&change_event, fd, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, nullptr);
     if (kevent(io_fd_, &change_event, 1, nullptr, 0, nullptr) == -1) {
         perror("kevent(ADD) failed");
@@ -111,7 +111,7 @@ inline bool Reactor::modify_fd(int fd, uint32_t event_mask, FdCallback write_cb)
 #ifdef __linux__
     epoll_event event;
     event.data.fd = fd;
-    event.events = EPOLLET; // Always use Edge-Triggered
+    event.events = EPOLLET; // 一定使用边缘触发
     if (event_mask & EventType::READ) {
         event.events |= EPOLLIN;
     }
@@ -120,17 +120,17 @@ inline bool Reactor::modify_fd(int fd, uint32_t event_mask, FdCallback write_cb)
     }
 
     if (epoll_ctl(io_fd_, EPOLL_CTL_MOD, fd, &event) == -1) {
-        // ENOENT means the fd is not in epoll, maybe it was closed.
-        // In this case, MOD fails. It's not a fatal error for this logic.
+        // ENOENT 意命该 fd 不在 epoll 中，可能已经关闭
+        // 这种情况下修改操作失败，但对本逻辑并非致命的
         if (errno != ENOENT) {
             perror("epoll_ctl(MOD) failed");
             return false;
         }
     }
 #elif __APPLE__
-    // kqueue manages read/write filters separately. We add/delete them as needed.
-    // NOTE: This assumes we always have a read callback and only toggle write.
-    // A more robust implementation might track registered filters per-fd.
+    // kqueue 分别管理读/写过滤器，我们根据需要加或删
+    // 注：这个实现仅依赖常常是读回调，只会切换写监听
+    // 更完善的实现可能需要记录每个 fd 的注册过滤器
     struct kevent change;
     if (event_mask & EventType::WRITE) {
         EV_SET(&change, fd, EVFILT_WRITE, EV_ADD | EV_CLEAR, 0, 0, nullptr);
@@ -169,7 +169,7 @@ inline bool Reactor::add_timer(int interval_ms, FdCallback cb) {
         close(tfd);
         return false;
     }
-    // Track the timer fd for cleanup
+    // 记录这个定时器 fd 以供清理
     {
         std::lock_guard<std::mutex> lock(mutex_);
         timer_fds_.push_back(tfd);
@@ -199,7 +199,7 @@ inline bool Reactor::remove_fd(int fd) {
     EV_SET(&change_event, fd, EVFILT_READ, EV_DELETE, 0, 0, nullptr);
     if (kevent(io_fd_, &change_event, 1, nullptr, 0, nullptr) == -1) {
         perror("kevent(DEL) failed");
-        // ENOENT means fd is not registered, not a critical error for removal
+        // ENOENT 意命 fd 没有注册，尚不是致命错误
         if(errno != ENOENT) return false;
     }
 #endif
@@ -211,12 +211,12 @@ inline bool Reactor::remove_fd(int fd) {
 
 inline void Reactor::stop() {
     if (!running_.exchange(false)) {
-        return; // Already stopping
+        return; // 已经在停止
     }
-    // Write to the pipe to unblock the epoll_wait/kevent call
+    // 向管道写入以解防 epoll_wait/kevent 阻塞
     char buf = 0;
     if (write(pipe_fd_[1], &buf, 1) < 0) {
-        // Log error, but continue shutdown
+        // 记录错误，但继续关闭
         perror("Failed to write to reactor shutdown pipe");
     }
 }
@@ -251,7 +251,7 @@ inline void Reactor::run() {
             uint32_t active_events = events[i].events;
 #elif __APPLE__
             int fd = events[i].ident;
-            // Translate kqueue filter to our event type
+            // 将 kqueue 过滤类型转为本地的事件类型
             uint32_t active_events = 0;
             if (events[i].filter == EVFILT_READ) {
                 active_events |= EventType::READ;
@@ -260,7 +260,7 @@ inline void Reactor::run() {
             }
 
             if (events[i].filter == EVFILT_TIMER) {
-                // Special handling for timer, treat as read-like event for dispatch
+                // 对定时器特殊处理，将其作为读类事件统一发送
                 fd = -static_cast<int>(events[i].ident);
                 active_events |= EventType::READ;
             }
@@ -273,7 +273,7 @@ inline void Reactor::run() {
 
             // 6. 根据事件类型分发回调
 #ifdef __linux__
-            // EPOLLERR/HUP might be set, handle them. For now, we check IN/OUT.
+            // EPOLLERR/HUP 可能设置，此处使用读/写事件检查
             if (active_events & (EPOLLIN | EPOLLERR | EPOLLHUP)) {
                 FdCallback cb;
                 {
@@ -297,7 +297,7 @@ inline void Reactor::run() {
                  FdCallback cb;
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
-                    // Timer fds are negative
+                    // 定时器 fd 是负数
                     auto it = callbacks_.find(fd);
                     if (it != callbacks_.end()) cb = it->second;
                 }
@@ -316,4 +316,4 @@ inline void Reactor::run() {
         }
     }
 }
-} // namespace fix40
+} // fix40 名称空间结束

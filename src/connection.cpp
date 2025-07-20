@@ -6,7 +6,7 @@
 #include <iostream>
 #include <cerrno>
 #include <string.h>
-#include <sys/socket.h> // <-- Add this for send()
+#include <sys/socket.h> // 为了使用 send()
 
 namespace fix40 {
 
@@ -17,17 +17,17 @@ Connection::Connection(int fd, Reactor* reactor, std::shared_ptr<Session> sessio
 
 Connection::~Connection() {
     std::cout << "Connection destroyed for fd " << fd_ << std::endl;
-    // The socket is closed by the OS when the fd is closed,
-    // but calling shutdown can provide a more graceful disconnection.
-    // We remove it from the reactor elsewhere.
+    // fd 关闭时对应的端已由系统关闭
+    // 但调用 shutdown 能提供更柔和的断连
+    // 将其从 reactor 中移除由其他位置处理
     close_fd();
 }
 
 void Connection::handle_read() {
-    // Prevent reading from a closed connection
+    // 防止从已关闭的连接读取
     if (is_closed_) return;
 
-    // ET mode requires us to read until the socket buffer is empty
+    // ET 模式需要一直读到缓冲空
     while (true) {
         char read_buf[4096];
         ssize_t bytes_read = ::read(fd_, read_buf, sizeof(read_buf));
@@ -39,68 +39,68 @@ void Connection::handle_read() {
                 return;
             }
         } else if (bytes_read == 0) {
-            // Connection closed by peer
+            // 连接被对方关闭
             session_->on_io_error("Connection closed by peer.");
             return;
         } else { // bytes_read < 0
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // No more data to read for now
+                // 暂时没有更多数据可读
                 break;
             } else {
-                // A real error occurred
+                // 发生了实际错误
                 session_->on_io_error("Socket read error.");
                 return;
             }
         }
     }
 
-    // Now, process the accumulated buffer
+    // 现在处理累积的缓冲
     while (!read_buffer_.empty()) {
         std::string& buffer = read_buffer_;
         
-        // --- FIX Message Framing Logic ---
+        // --- FIX 消息分架逻辑 ---
         const auto begin_string_pos = buffer.find("8=FIX.4.0\x01");
         if (begin_string_pos == std::string::npos) {
-            // No valid start found. To prevent buffer bloat with garbage data,
-            // we'll clear it. A more robust system might have a different strategy.
+            // 未找到有效的开头。为了防止缓冲增长，直接清空
+            // 更健壮的实现也许会有不同策略
             buffer.clear();
             break; 
         }
         if (begin_string_pos > 0) {
-            // Discard garbage data before the start of the message
+            // 丢弃消息开头前的无用数据
             buffer.erase(0, begin_string_pos);
         }
 
         const auto body_length_tag_pos = buffer.find("\x01""9=");
-        if (body_length_tag_pos == std::string::npos) break; // Not enough data for BodyLength tag
+        if (body_length_tag_pos == std::string::npos) break; // 未得到 BodyLength 标签所需的数据
 
         const auto body_length_val_pos = body_length_tag_pos + 3;
         const auto body_length_end_pos = buffer.find('\x01', body_length_val_pos);
-        if (body_length_end_pos == std::string::npos) break; // Not enough data for BodyLength value
+        if (body_length_end_pos == std::string::npos) break; // BodyLength 值数据不足
 
         int body_length = 0;
         try {
             const std::string body_length_str = buffer.substr(body_length_val_pos, body_length_end_pos - body_length_val_pos);
             body_length = std::stoi(body_length_str);
-            if (body_length < 0 || body_length > 4096) { // Basic sanity check
+            if (body_length < 0 || body_length > 4096) { // 基本的健壮性检查
                 throw std::runtime_error("Invalid BodyLength value");
             }
         } catch (const std::exception&) {
             session_->on_io_error("Corrupted or invalid BodyLength");
-            buffer.clear(); // Clear buffer to prevent loop on bad data
+            buffer.clear(); // 清理缓冲以避免循环
             break;
         }
         
-        // Calculate the total expected message length
+        // 计算总的预期消息长度
         const size_t soh_after_body_length_pos = body_length_end_pos + 1;
-        const size_t total_msg_len = soh_after_body_length_pos + body_length + 7; // "10=NNN\x01" is 7 chars
+        const size_t total_msg_len = soh_after_body_length_pos + body_length + 7; // "10=NNN\x01" 为 7 个字符
 
         if (buffer.size() < total_msg_len) {
-            // Not enough data for a full message yet
+            // 数据不足以形成完整消息
             break;
         }
 
-        // We have a full message, extract and process it
+        // 已经抽出一个完整消息，进行处理
         const std::string raw_msg = buffer.substr(0, total_msg_len);
         try {
             std::cout << "<<< RECV (" << fd_ << "): " << raw_msg << std::endl;
@@ -110,7 +110,7 @@ void Connection::handle_read() {
             session_->on_io_error(std::string("Decode error: ") + e.what());
         }
         
-        // Remove the processed message from the buffer
+        // 从缓冲中移除已处理的消息
         buffer.erase(0, total_msg_len);
     }
 }
@@ -118,7 +118,7 @@ void Connection::handle_read() {
 void Connection::handle_write() {
     session_->handle_write_ready();
 
-    // If the outbound queue is now empty, unregister for write events
+    // 如果发送队列空了，不再监听写事件
     if (session_->is_outbound_queue_empty()) {
         reactor_->modify_fd(fd_, EventType::READ, nullptr);
     }
@@ -127,9 +127,9 @@ void Connection::handle_write() {
 void Connection::send(std::string_view data) {
     if (is_closed_) return;
 
-    // The data might not be fully sent, so we'd need a write buffer.
-    // For simplicity, this example tries to send it all at once.
-    // A robust implementation would buffer the data and use handle_write.
+    // 数据可能无法一次发完，需要写缓存
+    // 为了简单说明，示例尝试一次发送
+    // 更完善的实现应缓存数据并使用 handle_write
 #ifdef __linux__
     ssize_t sent = ::send(fd_, data.data(), data.length(), MSG_NOSIGNAL);
 #else
@@ -144,24 +144,23 @@ void Connection::send(std::string_view data) {
 
 void Connection::shutdown() {
     std::cout << "Shutting down connection for fd " << fd_ << std::endl;
-    // Session is responsible for initiating the shutdown by calling this.
-    // This method's responsibility is to remove the fd from IO monitoring
-    // and close it.
+    // Session 通过此方法启动关闭
+    // 这里负责从 IO 监听中移除 fd 并关闭
     if (reactor_ && !is_closed_) {
         reactor_->remove_fd(fd_);
     }
-    // Final cleanup in close_fd()
+    // 最终清理在 close_fd() 中进行
     close_fd();
 }
 
 void Connection::close_fd() {
     if (!is_closed_.exchange(true)) {
-        // First, signal that we will not send or receive any more data.
-        // This is the most robust way to close a connection.
+        // 首先表明不再发送或接收数据
+        // 这是最稳定的关闭方式
         ::shutdown(fd_, SHUT_RDWR);
 
-        // Then, close the file descriptor.
+        // 然后关闭文件描述符
         close(fd_);
     }
 }
-} // namespace fix40
+} // fix40 名称空间结束
