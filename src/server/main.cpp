@@ -11,8 +11,7 @@ int main(int argc, char* argv[]) {
 
     try {
         int port = 9000;
-        // You can customize the number of worker threads via command line,
-        // and the port number.
+        // 可通过命令行自定义工作线程数量和端口号
         int num_threads = (argc > 1) ? std::stoi(argv[1]) : 0;
         if (argc > 2) {
             port = std::stoi(argv[2]);

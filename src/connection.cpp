@@ -83,7 +83,7 @@ void Connection::handle_read() {
         try {
             const std::string body_length_str = buffer.substr(body_length_val_pos, body_length_end_pos - body_length_val_pos);
             body_length = std::stoi(body_length_str);
-            if (body_length < 0 || body_length > 4096) { // Basic sanity check
+            if (body_length < 0 || body_length > 4096) { // 基本有效性检查
                 throw std::runtime_error("Invalid BodyLength value");
             }
         } catch (const std::exception&) {
@@ -120,8 +120,8 @@ void Connection::handle_write() {
     std::lock_guard<std::mutex> lock(write_mutex_);
 
     if (write_buffer_.empty()) {
-        // Spurious write event, or buffer was cleared by another thread.
-        // It's safe to unregister for write events now.
+        // 可能是伪写事件，或缓冲区已被其他线程清空
+        // 此时可以安全地取消写事件注册
         reactor_->modify_fd(fd_, EventType::READ, nullptr);
         return;
     }
@@ -130,10 +130,10 @@ void Connection::handle_write() {
 
     if (sent >= 0) {
         if (static_cast<size_t>(sent) < write_buffer_.length()) {
-            // Partial send, remove the sent part from the buffer
+            // 部分发送，移除已发送的数据
             write_buffer_.erase(0, sent);
         } else {
-            // All data sent, clear buffer and unregister for write events
+            // 全部数据已发送，清空缓冲并取消写事件注册
             write_buffer_.clear();
             reactor_->modify_fd(fd_, EventType::READ, nullptr);
         }
@@ -141,7 +141,7 @@ void Connection::handle_write() {
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
             session_->on_io_error("Socket write error.");
         }
-        // If EAGAIN, we just wait for the next handle_write call.
+        // 若为 EAGAIN，则等待下一次 handle_write 调用
     }
 }
 
@@ -150,20 +150,20 @@ void Connection::send(std::string_view data) {
 
     std::lock_guard<std::mutex> lock(write_mutex_);
 
-    // If buffer is empty, try a direct send
+    // 如果缓冲为空，尝试直接发送
     if (write_buffer_.empty()) {
         ssize_t sent = ::send(fd_, data.data(), data.length(), 0);
         if (sent >= 0) {
             if (static_cast<size_t>(sent) < data.length()) {
-                // Partial send, buffer the rest
+                // 部分发送，缓冲剩余数据
                 write_buffer_.append(data.substr(sent));
             } else {
-                // Sent completely, nothing more to do
+                // 已全部发送，无需额外处理
                 return;
             }
         } else { // sent < 0
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // Could not send anything, buffer the whole data
+                // 无法发送任何数据，将全部内容缓冲
                 write_buffer_.append(data);
             } else {
                 session_->on_io_error("Initial send error");
@@ -171,11 +171,11 @@ void Connection::send(std::string_view data) {
             }
         }
     } else {
-        // Buffer is not empty, just append the new data
+        // 缓冲区非空，仅追加新数据
         write_buffer_.append(data);
     }
 
-    // If we have anything in the buffer, we need to be registered for write events
+    // 若缓冲区有数据，需要注册写事件
     if (!write_buffer_.empty()) {
         reactor_->modify_fd(fd_, EventType::READ | EventType::WRITE, [this](int){ this->handle_write(); });
     }

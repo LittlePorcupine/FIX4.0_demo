@@ -3,8 +3,8 @@
 #include <csignal>
 
 int main(int argc, char* argv[]) {
-    // When writing to a socket whose read-end has been closed, this prevents
-    // the program from terminating, and instead `send()` will return -1 with errno=EPIPE.
+    // 当写入已被关闭读取端的套接字时，此设置可防止程序退出，
+    // 此时 send() 将返回 -1 并设置 errno=EPIPE。
     signal(SIGPIPE, SIG_IGN);
 
     try {
