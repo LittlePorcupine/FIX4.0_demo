@@ -92,8 +92,7 @@ bool Client::connect(const std::string& ip, int port) {
 
 void Client::disconnect() {
     if (session_) {
-        auto logout = create_logout_message("CLIENT", "SERVER", 0, "User requested logout.");
-        session_->send(logout);
+        session_->initiate_logout("User requested logout.");
     }
 }
 

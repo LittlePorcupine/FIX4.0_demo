@@ -10,11 +10,15 @@ int main(int argc, char* argv[]) {
     signal(SIGPIPE, SIG_IGN);
 
     try {
-        // 可以通过命令行自定义工作线数，
-        // 否则默认为硬件核数
+        int port = 9000;
+        // You can customize the number of worker threads via command line,
+        // and the port number.
         int num_threads = (argc > 1) ? std::stoi(argv[1]) : 0;
-
-        fix40::FixServer server(9000, num_threads);
+        if (argc > 2) {
+            port = std::stoi(argv[2]);
+        }
+        
+        fix40::FixServer server(port, num_threads);
         server.start();
     } catch (const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << std::endl;

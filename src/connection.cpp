@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <string.h>
 #include <sys/socket.h> // 为了使用 send()
+#include <mutex> // 为了线程安全
 
 namespace fix40 {
 
@@ -116,29 +117,67 @@ void Connection::handle_read() {
 }
 
 void Connection::handle_write() {
-    session_->handle_write_ready();
+    std::lock_guard<std::mutex> lock(write_mutex_);
 
-    // 如果发送队列空了，不再监听写事件
-    if (session_->is_outbound_queue_empty()) {
+    if (write_buffer_.empty()) {
+        // Spurious write event, or buffer was cleared by another thread.
+        // It's safe to unregister for write events now.
         reactor_->modify_fd(fd_, EventType::READ, nullptr);
+        return;
+    }
+
+    ssize_t sent = ::send(fd_, write_buffer_.c_str(), write_buffer_.length(), 0);
+
+    if (sent >= 0) {
+        if (static_cast<size_t>(sent) < write_buffer_.length()) {
+            // Partial send, remove the sent part from the buffer
+            write_buffer_.erase(0, sent);
+        } else {
+            // All data sent, clear buffer and unregister for write events
+            write_buffer_.clear();
+            reactor_->modify_fd(fd_, EventType::READ, nullptr);
+        }
+    } else { // sent < 0
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            session_->on_io_error("Socket write error.");
+        }
+        // If EAGAIN, we just wait for the next handle_write call.
     }
 }
 
 void Connection::send(std::string_view data) {
     if (is_closed_) return;
 
-    // 数据可能无法一次发完，需要写缓存
-    // 为了简单说明，示例尝试一次发送
-    // 更完善的实现应缓存数据并使用 handle_write
-#ifdef __linux__
-    ssize_t sent = ::send(fd_, data.data(), data.length(), MSG_NOSIGNAL);
-#else
-    ssize_t sent = ::send(fd_, data.data(), data.length(), 0);
-#endif
-    if (sent < 0) {
-        if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            session_->on_io_error("Send error");
+    std::lock_guard<std::mutex> lock(write_mutex_);
+
+    // If buffer is empty, try a direct send
+    if (write_buffer_.empty()) {
+        ssize_t sent = ::send(fd_, data.data(), data.length(), 0);
+        if (sent >= 0) {
+            if (static_cast<size_t>(sent) < data.length()) {
+                // Partial send, buffer the rest
+                write_buffer_.append(data.substr(sent));
+            } else {
+                // Sent completely, nothing more to do
+                return;
+            }
+        } else { // sent < 0
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // Could not send anything, buffer the whole data
+                write_buffer_.append(data);
+            } else {
+                session_->on_io_error("Initial send error");
+                return;
+            }
         }
+    } else {
+        // Buffer is not empty, just append the new data
+        write_buffer_.append(data);
+    }
+
+    // If we have anything in the buffer, we need to be registered for write events
+    if (!write_buffer_.empty()) {
+        reactor_->modify_fd(fd_, EventType::READ | EventType::WRITE, [this](int){ this->handle_write(); });
     }
 }
 

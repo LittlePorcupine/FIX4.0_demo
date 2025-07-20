@@ -5,6 +5,7 @@
 #include <string_view>
 #include <functional>
 #include <atomic>
+#include <mutex>
 
 namespace fix40 {
 
@@ -34,10 +35,13 @@ public:
 
 private:
     const int fd_;
-    Reactor* reactor_; // 非拥有指针
+    Reactor* reactor_; // Non-owning pointer
     std::shared_ptr<Session> session_;
     std::atomic<bool> is_closed_{false};
 
     std::string read_buffer_;
+    std::string write_buffer_;
+    std::mutex write_mutex_;
 };
-} // fix40 名称空间结束
+
+} // namespace fix40

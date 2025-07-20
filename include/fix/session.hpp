@@ -38,6 +38,8 @@ public:
     // 公共的发送接口: 编码并尝试直接发送
     void send(FixMessage& msg);
     // 新增: 用于处理写事件，发送缓冲区中的数据
+    void send_buffered_data();
+    // 新增: 用于处理写事件，发送缓冲区中的数据
     void handle_write_ready();
 
     // 新增: 为 Connection 提供与 outbound_q_ 交互的接口
@@ -54,7 +56,10 @@ public:
     void on_liveness_check();
     void on_heartbeat_check();
     void on_io_error(const std::string& reason);
-    void on_shutdown([[maybe_unused]] const std::string& reason);
+    void on_shutdown(const std::string& reason);
+
+    // New method to gracefully start a logout procedure.
+    void initiate_logout(const std::string& reason);
 
     // 新增: 调度周期性的会话定时任务
     void schedule_timer_tasks(TimingWheel* wheel);
