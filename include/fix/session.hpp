@@ -58,7 +58,7 @@ public:
     void on_io_error(const std::string& reason);
     void on_shutdown(const std::string& reason);
 
-    // New method to gracefully start a logout procedure.
+    // 新方法：优雅地发起登出流程
     void initiate_logout(const std::string& reason);
 
     // 新增: 调度周期性的会话定时任务
@@ -84,9 +84,9 @@ private:
     // void process_event(const Event& event);
 
     // --- 状态更新辅助函数 ---
-    // void on_message_received(const FixMessage& msg); // MOVED
-    // void on_liveness_check(); // MOVED
-    // void on_heartbeat_check(); // MOVED
+    // void on_message_received(const FixMessage& msg); // 已移动
+    // void on_liveness_check(); // 已移动
+    // void on_heartbeat_check(); // 已移动
     void perform_shutdown(const std::string& reason);
 
     // --- 内部发送实现 ---
@@ -94,7 +94,7 @@ private:
     void send_heartbeat(const std::string& test_req_id = "");
     void send_test_request(const std::string& id);
 
-    // FixCodec codec_; // MOVED TO PUBLIC
+    // FixCodec codec_; // 已移至 public
 
     // 调整成员变量的声明顺序以匹配构造函数的初始化顺序，修复 -Wreorder 警告
     const int heartBtInt;

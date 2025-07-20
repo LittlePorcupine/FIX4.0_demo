@@ -68,24 +68,24 @@ void Session::on_message_received(const FixMessage& msg) {
 
     const int msg_seq_num = msg.get_int(tags::MsgSeqNum);
     if (msg_seq_num != recvSeqNum) {
-        // Handle sequence number mismatch
+        // 处理消息序号不匹配
         perform_shutdown("Incorrect sequence number received.");
         return;
     }
     recvSeqNum++;
 
     const std::string msg_type = msg.get_string(tags::MsgType);
-    if (msg_type == "A") { // Logon
-        // Logon validation successful
-    } else if (msg_type == "0") { // Heartbeat
+    if (msg_type == "A") { // 登录
+        // 登录验证成功
+    } else if (msg_type == "0") { // 心跳
         if (msg.has(tags::TestReqID)) {
             if (msg.get_string(tags::TestReqID) == awaitingTestReqId) {
                 awaitingTestReqId.clear();
             }
         }
-    } else if (msg_type == "1") { // Test Request
+    } else if (msg_type == "1") { // 测试请求
         send_heartbeat(msg.get_string(tags::TestReqID));
-    } else if (msg_type == "5") { // Logout
+    } else if (msg_type == "5") { // 登出
         perform_shutdown("Logout message received from peer.");
     }
 }
@@ -97,8 +97,8 @@ void Session::on_liveness_check() {
     auto now = std::chrono::steady_clock::now();
     if (std::chrono::duration_cast<std::chrono::seconds>(now - lastRecv).count() >= heartBtInt) {
         if (!awaitingTestReqId.empty()) {
-            // Already sent a test request, and haven't received a response.
-            // This will be handled by the on_heartbeat_check
+            // 已经发送过测试请求但尚未收到回应
+            // 这将在 on_heartbeat_check 中处理
             return;
         }
         awaitingTestReqId = "TestReq_" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
@@ -129,8 +129,8 @@ void Session::on_shutdown(const std::string& reason) {
 }
 
 void Session::initiate_logout(const std::string& reason) {
-    // This is the entry point for a clean, self-initiated logout.
-    // We call perform_shutdown FIRST to set the state, then send the message.
+    // 这是启动自身登出的入口
+    // 首先调用 perform_shutdown 更新状态，然后发送消息
     perform_shutdown(reason);
     send_logout(reason);
 }

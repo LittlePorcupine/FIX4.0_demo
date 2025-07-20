@@ -15,7 +15,7 @@ class Reactor;
 
 class Connection : public std::enable_shared_from_this<Connection> {
 public:
-    static constexpr size_t kMaxReadBufferSize = 1 * 1024 * 1024; // 1 MB
+    static constexpr size_t kMaxReadBufferSize = 1 * 1024 * 1024; // 1 兆字节
 
     Connection(int fd, Reactor* reactor, std::shared_ptr<Session> session);
     ~Connection();
@@ -35,7 +35,7 @@ public:
 
 private:
     const int fd_;
-    Reactor* reactor_; // Non-owning pointer
+    Reactor* reactor_; // 非拥有型指针
     std::shared_ptr<Session> session_;
     std::atomic<bool> is_closed_{false};
 
