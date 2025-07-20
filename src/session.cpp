@@ -95,13 +95,14 @@ void Session::on_liveness_check() {
     if (!running_) return;
 
     auto now = std::chrono::steady_clock::now();
-    if (std::chrono::duration_cast<std::chrono::seconds>(now - lastRecv).count() >= heartBtInt) {
+    if (std::chrono::duration_cast<std::chrono::seconds>(now - lastRecv).count() >= (heartBtInt * 3 / 2)) {
         if (!awaitingTestReqId.empty()) {
             // 已经发送过测试请求但尚未收到回应
             // 这将在 on_heartbeat_check 中处理
             return;
         }
-        awaitingTestReqId = "TestReq_" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
+        awaitingTestReqId = "TestReq_" +
+            std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
         send_test_request(awaitingTestReqId);
     }
 }
@@ -112,7 +113,7 @@ void Session::on_heartbeat_check() {
 
     auto now = std::chrono::steady_clock::now();
     if (std::chrono::duration_cast<std::chrono::seconds>(now - lastRecv).count() >= (heartBtInt * 2)) {
-        perform_shutdown("No heartbeat from peer.");
+        initiate_logout("No heartbeat from peer.");
     }
 
     if (std::chrono::duration_cast<std::chrono::seconds>(now - lastSend).count() >= heartBtInt) {
@@ -143,13 +144,6 @@ void Session::schedule_timer_tasks(TimingWheel* wheel) {
     auto liveness_task = std::make_shared<std::function<void()>>();
     auto heartbeat_task = std::make_shared<std::function<void()>>();
 
-    *liveness_task = [weak_self, wheel, liveness_task]() {
-        if (auto self = weak_self.lock()) {
-            self->on_liveness_check();
-            wheel->add_task(self->heartBtInt * 1000, *liveness_task);
-        }
-    };
-
     *heartbeat_task = [weak_self, wheel, heartbeat_task]() {
         if (auto self = weak_self.lock()) {
             self->on_heartbeat_check();
@@ -157,8 +151,15 @@ void Session::schedule_timer_tasks(TimingWheel* wheel) {
         }
     };
 
-    wheel->add_task(heartBtInt * 1000, *liveness_task);
+    *liveness_task = [weak_self, wheel, liveness_task]() {
+        if (auto self = weak_self.lock()) {
+            self->on_liveness_check();
+            wheel->add_task(self->heartBtInt * 1000, *liveness_task);
+        }
+    };
+
     wheel->add_task(heartBtInt * 1000, *heartbeat_task);
+    wheel->add_task(heartBtInt * 1000, *liveness_task);
 }
 
 void Session::perform_shutdown(const std::string& reason) {
