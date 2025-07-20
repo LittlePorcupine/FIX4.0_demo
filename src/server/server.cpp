@@ -63,7 +63,7 @@ FixServer::FixServer(int port, int num_threads)
         throw std::runtime_error("Listen failed");
     }
 
-    std::cout << "Server listening on port " << port << std::endl;
+    std::cout << "Server listening on port " << port_ << std::endl;
     std::cout << "Worker thread pool size: " << worker_pool_->get_thread_count() << std::endl;
 }
 

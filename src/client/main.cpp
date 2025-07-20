@@ -1,7 +1,12 @@
 #include "client.hpp"
 #include <iostream>
+#include <csignal>
 
 int main() {
+    // Globally ignore the SIGPIPE signal.
+    // This is a common practice in networking applications on Unix-like systems.
+    signal(SIGPIPE, SIG_IGN);
+
     try {
         fix40::Client client;
         if (client.connect("127.0.0.1", 9000)) {
