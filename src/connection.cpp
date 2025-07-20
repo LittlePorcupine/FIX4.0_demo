@@ -127,9 +127,9 @@ void Connection::shutdown() {
 
 void Connection::close_fd() {
     if (!is_closed_.exchange(true)) {
-        // First, signal that we will not send any more data.
-        // This helps ensure that any buffered data is sent before closing.
-        ::shutdown(fd_, SHUT_WR);
+        // First, signal that we will not send or receive any more data.
+        // This is the most robust way to close a connection.
+        ::shutdown(fd_, SHUT_RDWR);
         
         // Then, close the file descriptor.
         close(fd_);

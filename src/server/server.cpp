@@ -106,7 +106,17 @@ void FixServer::start() {
     std::cout << "Reactor stopped. Closing listener and shutting down sessions..." << std::endl;
     reactor_->remove_fd(listen_fd_);
 
-    for (auto const& [fd, conn] : connections_) {
+    // Safely get a list of connections to shutdown
+    std::vector<std::shared_ptr<Connection>> conns_to_shutdown;
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        for (auto const& [fd, conn] : connections_) {
+            conns_to_shutdown.push_back(conn);
+        }
+    }
+
+    // Now, shutdown the sessions without holding the lock
+    for (const auto& conn : conns_to_shutdown) {
         conn->session()->on_shutdown("Server is shutting down");
     }
 
