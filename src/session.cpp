@@ -130,9 +130,9 @@ void Session::on_shutdown(const std::string& reason) {
 
 void Session::initiate_logout(const std::string& reason) {
     // 这是启动自身登出的入口
-    // 首先调用 perform_shutdown 更新状态，然后发送消息
-    perform_shutdown(reason);
+    // 先发送登出报文，再执行关闭逻辑，确保对端能收到
     send_logout(reason);
+    perform_shutdown(reason);
 }
 
 void Session::schedule_timer_tasks(TimingWheel* wheel) {
