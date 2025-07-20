@@ -121,5 +121,4 @@ void Client::on_connection_close() {
     // The main loop in run_console will then unblock and the client can exit.
     if(reactor_) reactor_->stop();
 }
-
 } // namespace fix40

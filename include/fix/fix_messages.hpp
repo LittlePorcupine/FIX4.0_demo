@@ -75,5 +75,4 @@ inline FixMessage create_logout_message(const std::string& sender,
     }
     return lo;
 }
-
 } // namespace fix40

@@ -166,5 +166,4 @@ void FixServer::on_connection_close(int fd) {
         std::cout << "Cleaned up resources for fd: " << fd << std::endl;
     }
 }
-
 } // namespace fix40

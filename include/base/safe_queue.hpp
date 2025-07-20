@@ -58,5 +58,4 @@ private:
     std::condition_variable cond_;
     bool stop_;
 };
-
 } // namespace fix40

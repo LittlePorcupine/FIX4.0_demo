@@ -38,5 +38,4 @@ private:
 
     static FixServer* instance_for_signal_;
 };
-
 } // namespace fix40

@@ -33,5 +33,4 @@ private:
 
     std::thread reactor_thread_;
 };
-
 } // namespace fix40

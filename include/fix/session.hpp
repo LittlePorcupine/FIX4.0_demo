@@ -110,5 +110,4 @@ private:
     std::chrono::steady_clock::time_point lastRecv;
     std::chrono::steady_clock::time_point lastSend;
 };
-
 } // namespace fix40

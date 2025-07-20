@@ -74,5 +74,4 @@ inline ThreadPool::~ThreadPool() {
         worker.join();
     }
 }
-
 } // namespace fix40

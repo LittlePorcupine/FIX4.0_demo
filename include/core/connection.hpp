@@ -40,5 +40,4 @@ private:
 
     std::string read_buffer_;
 };
-
 } // namespace fix40

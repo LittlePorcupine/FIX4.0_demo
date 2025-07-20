@@ -316,5 +316,4 @@ inline void Reactor::run() {
         }
     }
 }
-
 } // namespace fix40

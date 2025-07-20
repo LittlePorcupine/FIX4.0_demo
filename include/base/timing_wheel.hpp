@@ -102,5 +102,4 @@ private:
     std::vector<std::list<TimerNode>> wheel_;
     std::mutex mutex_;
 };
-
 } // namespace fix40

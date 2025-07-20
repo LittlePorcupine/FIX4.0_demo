@@ -296,5 +296,4 @@ void Session::send_test_request(const std::string& id) {
     }
     send(tr);
 }
-
 } // namespace fix40

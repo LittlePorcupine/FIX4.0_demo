@@ -157,5 +157,4 @@ void Connection::close_fd() {
         close(fd_);
     }
 }
-
 } // namespace fix40

@@ -200,5 +200,4 @@ private:
         std::strftime(buf, buf_size, "%Y%m%d-%H:%M:%S", &tm);
     }
 };
-
 } // namespace fix40
