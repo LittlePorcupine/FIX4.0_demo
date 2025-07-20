@@ -31,6 +31,16 @@ public:
         return true;
     }
 
+    bool try_pop(T& value) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (queue_.empty() || stop_) {
+            return false;
+        }
+        value = std::move(queue_.front());
+        queue_.pop();
+        return true;
+    }
+
     void stop() {
         std::lock_guard<std::mutex> lock(mutex_);
         stop_ = true;

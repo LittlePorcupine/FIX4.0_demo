@@ -70,7 +70,7 @@ void Session::send(FixMessage& msg) {
 void Session::send_buffered_data() {
     if (auto conn = connection_.lock()) {
         std::string to_send;
-        while (outbound_q_.pop(to_send)) {
+        while (outbound_q_.try_pop(to_send)) {
             conn->send(to_send);
         }
     }

@@ -51,6 +51,7 @@ private:
     std::unordered_map<int, FdCallback> callbacks_;
     std::unordered_map<int, FdCallback> write_callbacks_; // 3. 新增写回调 map
     std::mutex mutex_;
+    std::vector<int> timer_fds_;
 };
 
 // --- Implementation ---
@@ -75,6 +76,9 @@ inline Reactor::~Reactor() {
     close(io_fd_);
     close(pipe_fd_[0]);
     close(pipe_fd_[1]);
+    for (int tfd : timer_fds_) {
+        close(tfd);
+    }
 }
 
 inline bool Reactor::add_fd(int fd, FdCallback cb) {
@@ -164,6 +168,11 @@ inline bool Reactor::add_timer(int interval_ms, FdCallback cb) {
         perror("timerfd_settime failed");
         close(tfd);
         return false;
+    }
+    // Track the timer fd for cleanup
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        timer_fds_.push_back(tfd);
     }
     return add_fd(tfd, std::move(cb));
 #elif __APPLE__

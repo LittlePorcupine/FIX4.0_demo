@@ -20,10 +20,13 @@ Connection::~Connection() {
     // The socket is closed by the OS when the fd is closed, 
     // but calling shutdown can provide a more graceful disconnection.
     // We remove it from the reactor elsewhere.
-    close(fd_);
+    close_fd();
 }
 
 void Connection::handle_read() {
+    // Prevent reading from a closed connection
+    if (is_closed_) return;
+
     char read_buf[4096];
     ssize_t bytes_read = ::read(fd_, read_buf, sizeof(read_buf));
 
@@ -113,7 +116,19 @@ void Connection::send(std::string_view data) {
 
 void Connection::shutdown() {
     std::cout << "Shutting down connection for fd " << fd_ << std::endl;
-    reactor_->remove_fd(fd_);
+    // Graceful shutdown should be handled by the Session (sending Logout etc).
+    // This method's responsibility is to remove the fd from IO monitoring
+    // and close it.
+    if (reactor_) {
+        reactor_->remove_fd(fd_);
+    }
+    close_fd();
+}
+
+void Connection::close_fd() {
+    if (!is_closed_.exchange(true)) {
+        close(fd_);
+    }
 }
 
 } // namespace fix40 
