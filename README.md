@@ -75,7 +75,4 @@ make
     ```
 客户端将自动连接到服务器，并进入交互模式。您可以输入 `logout` 来正常关闭连接。
 
-### 会话心跳逻辑
-
-在双方没有任何消息收发的情况下，如本端在 `HeartBtInt` 秒内没有发送任何数据，会主动发送一次 Heartbeat 保活；若自最后接收消息起超过 `1.5 * HeartBtInt` 秒仍无通信，则会发送 Test Request 迫使对方回一个含同 ID 的 Heartbeat；若再持续到 `2 * HeartBtInt` 仍收不到该 Heartbeat，则发送 Logout 并断开连接。
 
