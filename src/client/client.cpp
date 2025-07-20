@@ -15,7 +15,7 @@
 namespace fix40 {
 
 Client::Client() {
-    worker_pool_ = std::make_unique<ThreadPool>(2); // Client doesn't need many workers
+    worker_pool_ = std::make_unique<ThreadPool>(2); // 客户端不需要很多工作线
     reactor_ = std::make_unique<Reactor>();
     timing_wheel_ = std::make_unique<TimingWheel>(60, 1000);
 }
@@ -54,7 +54,7 @@ bool Client::connect(const std::string& ip, int port) {
     fcntl(sock, F_SETFL, O_NONBLOCK);
     std::cout << "Connected to server." << std::endl;
 
-    // Setup the main timer that drives the timing wheel
+    // 设置主定时器来驱动时钟轮
     reactor_->add_timer(1000, [this]([[maybe_unused]] int timer_fd) {
 #ifdef __linux__
         uint64_t expirations;
@@ -69,12 +69,12 @@ bool Client::connect(const std::string& ip, int port) {
 
     session_ = std::make_shared<Session>("CLIENT", "SERVER", 30, close_cb);
     connection_ = std::make_shared<Connection>(sock, reactor_.get(), session_);
-    session_->set_connection(connection_); // Set the back-reference
+    session_->set_connection(connection_); // 设置反向引用
 
     session_->start();
     session_->schedule_timer_tasks(timing_wheel_.get());
 
-    // Start reactor in a background thread
+    // 在后台线程启动 reactor
     reactor_thread_ = std::thread([this]{ reactor_->run(); });
 
     reactor_->add_fd(sock, [this](int) {
@@ -104,11 +104,11 @@ void Client::run_console() {
         if (line == "logout") {
             std::cout << "Logout command issued. Sending logout message..." << std::endl;
             disconnect();
-            break; // Exit the input loop
+            break; // 退出输入循环
         }
     }
 
-    // Wait for the session to terminate gracefully
+    // 等待会话平稳结束
     if (session_) {
         while(session_->is_running()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -117,8 +117,8 @@ void Client::run_console() {
 }
 
 void Client::on_connection_close() {
-    // This can be called from any thread, so we make it simple: just stop the reactor.
-    // The main loop in run_console will then unblock and the client can exit.
+    // 可由任何线程调用，简单处理：直接停止 reactor
+    // run_console 中的主循环将被解除阻塞，客户端就可退出
     if(reactor_) reactor_->stop();
 }
-} // namespace fix40
+} // fix40 名称空间结束

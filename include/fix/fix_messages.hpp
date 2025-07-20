@@ -75,4 +75,4 @@ inline FixMessage create_logout_message(const std::string& sender,
     }
     return lo;
 }
-} // namespace fix40
+} // fix40 名称空间结束

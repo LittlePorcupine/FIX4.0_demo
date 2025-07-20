@@ -14,7 +14,7 @@ public:
     void enqueue(T value) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stop_) {
-            return; // Or throw an exception
+            return; // 或者抛异常
         }
         queue_.push(std::move(value));
         cond_.notify_one();
@@ -58,4 +58,4 @@ private:
     std::condition_variable cond_;
     bool stop_;
 };
-} // namespace fix40
+} // fix40 名称空间结束

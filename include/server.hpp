@@ -7,7 +7,7 @@
 
 namespace fix40 {
 
-// Forward declarations
+// 前置声明
 class Reactor;
 class ThreadPool;
 class TimingWheel;
@@ -38,4 +38,4 @@ private:
 
     static FixServer* instance_for_signal_;
 };
-} // namespace fix40
+} // fix40 名称空间结束

@@ -3,7 +3,7 @@
 namespace fix40 {
 namespace tags {
 
-// Header Tags
+// 标头标签
 constexpr int BeginString = 8;
 constexpr int BodyLength = 9;
 constexpr int MsgType = 35;
@@ -12,18 +12,18 @@ constexpr int TargetCompID = 56;
 constexpr int MsgSeqNum = 34;
 constexpr int SendingTime = 52;
 
-// Body Tags (Logon-specific)
+// 身份验证体的中间标签
 constexpr int EncryptMethod = 98;
 constexpr int HeartBtInt = 108;
 
-// Body Tags (Session-level)
+// 会话层的中间标签
 constexpr int TestReqID = 112;
 
-// General-purpose Body Tags
+// 通用的中间标签
 constexpr int Text = 58;
 
-// Trailer Tag
+// 尾部标签
 constexpr int CheckSum = 10;
 
-} // namespace tags
-} // namespace fix40
+} // tags 名称空间结束
+} // fix40 名称空间结束
