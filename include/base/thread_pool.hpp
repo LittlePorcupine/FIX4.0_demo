@@ -4,7 +4,7 @@
 #include <thread>
 #include <functional>
 #include <future>
-#include <type_traits> // For std::invoke_result_t
+#include <type_traits> // 供 std::invoke_result_t 使用
 #include <atomic>
 
 #include "base/safe_queue.hpp"
@@ -30,7 +30,7 @@ private:
     size_t thread_count_;
 };
 
-// --- Implementation ---
+// --- 实现 ---
 
 inline ThreadPool::ThreadPool(size_t threads) : stop_(false), thread_count_(threads) {
     for(size_t i = 0; i < threads; ++i) {
@@ -74,4 +74,4 @@ inline ThreadPool::~ThreadPool() {
         worker.join();
     }
 }
-} // namespace fix40
+} // fix40 名称空间结束

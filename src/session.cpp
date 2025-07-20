@@ -8,7 +8,7 @@
 // #include <variant> // 1. 不再需要 variant
 
 /* 2. 移除 std::visit 相关的辅助函数
-// Helper for std::visit
+// 用于 std::visit 的助手
 template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
 template<class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 */
@@ -52,7 +52,7 @@ void Session::stop() {
 }
 
 void Session::send(FixMessage& msg) {
-    if (shutting_down_.load()) { // Use load for atomic read
+    if (shutting_down_.load()) { // 使用 load 进行原子读取
         std::cout << "[Session] Ignoring send on shutting down session." << std::endl;
         return;
     }
@@ -87,7 +87,7 @@ void Session::handle_write_ready() {
         }
     }
 
-    // This check is now robust. It's called when the write buffer might be empty.
+    // 现在这个检查更加稳固，当写缓存可能为空时会调用
     if (shutting_down_.load() && outbound_q_.empty()) {
         if (auto conn = connection_.lock()) {
             conn->shutdown(); // Gracefully close the connection
@@ -103,9 +103,9 @@ void Session::post_event(Event event) {
 */
 
 void Session::schedule_timer_tasks(TimingWheel* wheel) {
-    // This pattern is used to create a self-rescheduling task.
-    // The task is wrapped in a shared_ptr so the lambda can capture a
-    // shared_ptr to itself, breaking the circular dependency at initialization.
+    // 这种模式用来创建自重计时任务
+    // 将任务包装于 shared_ptr，以便 lambda 捕获自身
+    // 这样可以破除循环依赖
     auto p_check_task = std::make_shared<std::function<void()>>();
 
     *p_check_task = [self = weak_from_this(), wheel, p_check_task] {
@@ -198,7 +198,7 @@ void Session::on_message_received(const FixMessage& msg) {
     // Treat receiving a message as a sign of life that resets the heartbeat send timer as well.
     this->lastSend = this->lastRecv;
 
-    // Restore sequence number validation
+    // 恢复序列号校验
     const int seq = msg.get_int(tags::MsgSeqNum);
     if (seq < this->recvSeqNum) {
         perform_shutdown("Sequence number too low, expected " + std::to_string(this->recvSeqNum) + " but got " + std::to_string(seq));
@@ -244,8 +244,8 @@ void Session::on_io_error(const std::string& reason) {
 }
 
 void Session::on_shutdown(const std::string& reason) {
-    // This is the final step, called when the connection is truly closed.
-    // We now call the application-level callback.
+    // 这是最后一步，连接真正关闭时会调用
+    // 现在执行应用层回调
     if (shutdown_callback_) {
         std::cout << "[Session] Executing final shutdown callback." << std::endl;
         shutdown_callback_();
@@ -262,14 +262,14 @@ void Session::perform_shutdown(const std::string& reason) {
     if (shutting_down_.exchange(true)) {
         return;
     }
-    stop(); // Immediately signal that the session is no longer running logically.
+    stop(); // 立即表明会话不再运行
 
     std::cout << "[Session] Shutting down: " << reason << std::endl;
 
     send_logout(reason);
 
-    // If there was nothing in the queue after sending logout, we can try to shutdown immediately.
-    // Otherwise, handle_write_ready() will handle the final shutdown.
+    // 如果发送 logout 后队列为空，则可尝试立刻关闭
+    // 否则 handle_write_ready() 会完成最终关闭
     if (outbound_q_.empty()) {
         if (auto conn = connection_.lock()) {
             conn->shutdown();
@@ -279,12 +279,12 @@ void Session::perform_shutdown(const std::string& reason) {
 
 // --- 内部发送实现 ---
 void Session::send_logout(const std::string& reason) {
-    auto logout_msg = create_logout_message(senderCompID, targetCompID, 0, reason); // Seq num will be set in send()
+    auto logout_msg = create_logout_message(senderCompID, targetCompID, 0, reason); // 序号将在 send() 中设置
     send(logout_msg);
 }
 
 void Session::send_heartbeat(const std::string& test_req_id) {
-    auto hb = create_heartbeat_message(senderCompID, targetCompID, 0, test_req_id); // Seq num will be set in send()
+    auto hb = create_heartbeat_message(senderCompID, targetCompID, 0, test_req_id); // 序号将在 send() 中设置
     send(hb);
 }
 
@@ -296,4 +296,4 @@ void Session::send_test_request(const std::string& id) {
     }
     send(tr);
 }
-} // namespace fix40
+} // fix40 名称空间结束
