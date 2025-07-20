@@ -137,8 +137,28 @@ void Session::initiate_logout(const std::string& reason) {
 
 void Session::schedule_timer_tasks(TimingWheel* wheel) {
     if (!wheel) return;
-    wheel->add_task(heartBtInt * 1000, [self = shared_from_this()]() { self->on_liveness_check(); });
-    wheel->add_task(heartBtInt * 1000, [self = shared_from_this()]() { self->on_heartbeat_check(); });
+
+    std::weak_ptr<Session> weak_self = shared_from_this();
+
+    auto liveness_task = std::make_shared<std::function<void()>>();
+    auto heartbeat_task = std::make_shared<std::function<void()>>();
+
+    *liveness_task = [weak_self, wheel, liveness_task]() {
+        if (auto self = weak_self.lock()) {
+            self->on_liveness_check();
+            wheel->add_task(self->heartBtInt * 1000, *liveness_task);
+        }
+    };
+
+    *heartbeat_task = [weak_self, wheel, heartbeat_task]() {
+        if (auto self = weak_self.lock()) {
+            self->on_heartbeat_check();
+            wheel->add_task(self->heartBtInt * 1000, *heartbeat_task);
+        }
+    };
+
+    wheel->add_task(heartBtInt * 1000, *liveness_task);
+    wheel->add_task(heartBtInt * 1000, *heartbeat_task);
 }
 
 void Session::perform_shutdown(const std::string& reason) {
