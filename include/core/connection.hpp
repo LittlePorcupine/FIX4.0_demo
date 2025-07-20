@@ -8,7 +8,7 @@
 
 namespace fix40 {
 
-// Forward declarations
+// 前置声明
 class Session;
 class Reactor;
 
@@ -23,10 +23,10 @@ public:
     void handle_write();
     void send(std::string_view data);
 
-    // Initiates a graceful shutdown of the connection.
+    // 启动轻量的关联关闭
     void shutdown();
 
-    // Immediately closes the file descriptor.
+    // 立即关闭文件描述符
     void close_fd();
 
     int fd() const { return fd_; }
@@ -34,10 +34,10 @@ public:
 
 private:
     const int fd_;
-    Reactor* reactor_; // Non-owning pointer
+    Reactor* reactor_; // 非拥有指针
     std::shared_ptr<Session> session_;
     std::atomic<bool> is_closed_{false};
 
     std::string read_buffer_;
 };
-} // namespace fix40
+} // fix40 名称空间结束

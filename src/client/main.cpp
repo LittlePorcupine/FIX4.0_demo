@@ -3,8 +3,8 @@
 #include <csignal>
 
 int main() {
-    // Globally ignore the SIGPIPE signal.
-    // This is a common practice in networking applications on Unix-like systems.
+    // 全局忽略 SIGPIPE 信号
+    // 这是 Unix 系统网络应用常用的做法
     signal(SIGPIPE, SIG_IGN);
 
     try {
