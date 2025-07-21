@@ -122,7 +122,7 @@ void Connection::handle_write() {
     if (write_buffer_.empty()) {
         // 可能是伪写事件，或缓冲区已被其他线程清空
         // 此时可以安全地取消写事件注册
-        reactor_->modify_fd(fd_, EventType::READ, nullptr);
+        reactor_->modify_fd(fd_, static_cast<uint32_t>(EventType::READ), nullptr);
         return;
     }
 
@@ -135,7 +135,7 @@ void Connection::handle_write() {
         } else {
             // 全部数据已发送，清空缓冲并取消写事件注册
             write_buffer_.clear();
-            reactor_->modify_fd(fd_, EventType::READ, nullptr);
+            reactor_->modify_fd(fd_, static_cast<uint32_t>(EventType::READ), nullptr);
         }
     } else { // sent < 0
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -177,7 +177,7 @@ void Connection::send(std::string_view data) {
 
     // 若缓冲区有数据，需要注册写事件
     if (!write_buffer_.empty()) {
-        reactor_->modify_fd(fd_, EventType::READ | EventType::WRITE, [this](int){ this->handle_write(); });
+        reactor_->modify_fd(fd_, static_cast<uint32_t>(EventType::READ) | static_cast<uint32_t>(EventType::WRITE), [this](int){ this->handle_write(); });
     }
 }
 

@@ -21,13 +21,13 @@
 #error "Unsupported platform for Reactor"
 #endif
 
+namespace fix40 {
+
 // 1. 定义事件掩码
-enum EventType : uint32_t {
+enum class EventType : uint32_t {
     READ = 1,
     WRITE = 2
 };
-
-namespace fix40 {
 
 class Reactor {
 public:
@@ -112,10 +112,10 @@ inline bool Reactor::modify_fd(int fd, uint32_t event_mask, FdCallback write_cb)
     epoll_event event;
     event.data.fd = fd;
     event.events = EPOLLET; // 一定使用边缘触发
-    if (event_mask & EventType::READ) {
+    if (static_cast<uint32_t>(event_mask) & static_cast<uint32_t>(EventType::READ)) {
         event.events |= EPOLLIN;
     }
-    if (event_mask & EventType::WRITE) {
+    if (static_cast<uint32_t>(event_mask) & static_cast<uint32_t>(EventType::WRITE)) {
         event.events |= EPOLLOUT;
     }
 
@@ -132,7 +132,7 @@ inline bool Reactor::modify_fd(int fd, uint32_t event_mask, FdCallback write_cb)
     // 注：这个实现仅依赖常常是读回调，只会切换写监听
     // 更完善的实现可能需要记录每个 fd 的注册过滤器
     struct kevent change;
-    if (event_mask & EventType::WRITE) {
+    if (static_cast<uint32_t>(event_mask) & static_cast<uint32_t>(EventType::WRITE)) {
         EV_SET(&change, fd, EVFILT_WRITE, EV_ADD | EV_CLEAR, 0, 0, nullptr);
     } else {
         EV_SET(&change, fd, EVFILT_WRITE, EV_DELETE, 0, 0, nullptr);
@@ -144,7 +144,7 @@ inline bool Reactor::modify_fd(int fd, uint32_t event_mask, FdCallback write_cb)
     }
 #endif
     std::lock_guard<std::mutex> lock(mutex_);
-    if (event_mask & EventType::WRITE) {
+    if (static_cast<uint32_t>(event_mask) & static_cast<uint32_t>(EventType::WRITE)) {
         write_callbacks_[fd] = std::move(write_cb);
     } else {
         write_callbacks_.erase(fd);
@@ -254,15 +254,15 @@ inline void Reactor::run() {
             // 将 kqueue 过滤类型转为本地的事件类型
             uint32_t active_events = 0;
             if (events[i].filter == EVFILT_READ) {
-                active_events |= EventType::READ;
+                active_events |= static_cast<uint32_t>(EventType::READ);
             } else if (events[i].filter == EVFILT_WRITE) {
-                active_events |= EventType::WRITE;
+                active_events |= static_cast<uint32_t>(EventType::WRITE);
             }
 
             if (events[i].filter == EVFILT_TIMER) {
                 // 对定时器特殊处理，将其作为读类事件统一发送
                 fd = -static_cast<int>(events[i].ident);
-                active_events |= EventType::READ;
+                active_events |= static_cast<uint32_t>(EventType::READ);
             }
 #endif
             if (fd == pipe_fd_[0]) {
@@ -293,7 +293,7 @@ inline void Reactor::run() {
                 if (cb) cb(fd);
             }
 #elif __APPLE__
-            if (active_events & EventType::READ) {
+            if (active_events & static_cast<uint32_t>(EventType::READ)) {
                  FdCallback cb;
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
@@ -303,7 +303,7 @@ inline void Reactor::run() {
                 }
                 if (cb) cb(fd);
             }
-            if (active_events & EventType::WRITE) {
+            if (active_events & static_cast<uint32_t>(EventType::WRITE)) {
                  FdCallback cb;
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
