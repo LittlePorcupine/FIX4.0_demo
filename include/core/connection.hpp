@@ -6,6 +6,7 @@
 #include <functional>
 #include <atomic>
 #include <mutex>
+#include "fix/fix_frame_decoder.hpp" // 添加头文件
 
 namespace fix40 {
 
@@ -39,7 +40,8 @@ private:
     std::shared_ptr<Session> session_;
     std::atomic<bool> is_closed_{false};
 
-    std::string read_buffer_;
+    FixFrameDecoder frame_decoder_; // 替代 read_buffer_
+
     std::string write_buffer_;
     std::mutex write_mutex_;
 };

@@ -28,91 +28,54 @@ void Connection::handle_read() {
     // 防止从已关闭的连接读取
     if (is_closed_) return;
 
-    // ET 模式需要一直读到缓冲空
-    while (true) {
-        char read_buf[4096];
-        ssize_t bytes_read = ::read(fd_, read_buf, sizeof(read_buf));
+    char read_buf[4096];
+    ssize_t bytes_read = 0;
 
+    // ET 模式需要一直读到缓冲空
+    // 使用 while 循环简化读取逻辑
+    while (true) {
+        bytes_read = ::read(fd_, read_buf, sizeof(read_buf));
         if (bytes_read > 0) {
-            read_buffer_.append(read_buf, bytes_read);
-            if (read_buffer_.size() > kMaxReadBufferSize) {
-                session_->on_io_error("Read buffer overflow");
-                return;
-            }
-        } else if (bytes_read == 0) {
-            // 连接被对方关闭，这是一个正常的关闭事件
-            session_->on_shutdown("Connection closed by peer.");
+            frame_decoder_.append(read_buf, bytes_read);
+        } else {
+            break; // 读取完成或遇到错误
+        }
+    }
+
+    if (bytes_read == 0) {
+        // 连接被对方关闭，这是一个正常的关闭事件
+        session_->on_shutdown("Connection closed by peer.");
+        return;
+    } 
+    
+    if (bytes_read < 0) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            // 发生了实际错误
+            session_->on_io_error("Socket read error.");
             return;
-        } else { // bytes_read < 0
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // 暂时没有更多数据可读
-                break;
-            } else {
-                // 发生了实际错误
-                session_->on_io_error("Socket read error.");
-                return;
-            }
         }
     }
 
     // 现在处理累积的缓冲
-    while (!read_buffer_.empty()) {
-        std::string& buffer = read_buffer_;
-        
-        // --- FIX 消息分架逻辑 ---
-        const auto begin_string_pos = buffer.find("8=FIX.4.0\x01");
-        if (begin_string_pos == std::string::npos) {
-            // 未找到有效的开头。为了防止缓冲增长，直接清空
-            // 更健壮的实现也许会有不同策略
-            buffer.clear();
-            break; 
-        }
-        if (begin_string_pos > 0) {
-            // 丢弃消息开头前的无用数据
-            buffer.erase(0, begin_string_pos);
-        }
-
-        const auto body_length_tag_pos = buffer.find("\x01""9=");
-        if (body_length_tag_pos == std::string::npos) break; // 未得到 BodyLength 标签所需的数据
-
-        const auto body_length_val_pos = body_length_tag_pos + 3;
-        const auto body_length_end_pos = buffer.find('\x01', body_length_val_pos);
-        if (body_length_end_pos == std::string::npos) break; // BodyLength 值数据不足
-
-        int body_length = 0;
+    std::string raw_msg;
+    while (true) {
         try {
-            const std::string body_length_str = buffer.substr(body_length_val_pos, body_length_end_pos - body_length_val_pos);
-            body_length = std::stoi(body_length_str);
-            if (body_length < 0 || body_length > 4096) { // 基本有效性检查
-                throw std::runtime_error("Invalid BodyLength value");
+            if (!frame_decoder_.next_message(raw_msg)) {
+                // 没有更多完整的消息了
+                break;
             }
-        } catch (const std::exception&) {
-            session_->on_io_error("Corrupted or invalid BodyLength");
-            buffer.clear(); // 清理缓冲以避免循环
-            break;
-        }
-        
-        // 计算总的预期消息长度
-        const size_t soh_after_body_length_pos = body_length_end_pos + 1;
-        const size_t total_msg_len = soh_after_body_length_pos + body_length + 7; // "10=NNN\x01" 为 7 个字符
 
-        if (buffer.size() < total_msg_len) {
-            // 数据不足以形成完整消息
-            break;
-        }
-
-        // 已经抽出一个完整消息，进行处理
-        const std::string raw_msg = buffer.substr(0, total_msg_len);
-        try {
+            // 已经抽出一个完整消息，进行处理
             std::cout << "<<< RECV (" << fd_ << "): " << raw_msg << std::endl;
             FixMessage msg = session_->codec_.decode(raw_msg);
             session_->on_message_received(std::move(msg));
+
         } catch (const std::exception& e) {
-            session_->on_io_error(std::string("Decode error: ") + e.what());
+            // 分帧或解码出错
+            session_->on_io_error(std::string("Protocol error: ") + e.what());
+            // 出现协议错误后，连接通常应被关闭，这里简单返回
+            return;
         }
-        
-        // 从缓冲中移除已处理的消息
-        buffer.erase(0, total_msg_len);
     }
 }
 

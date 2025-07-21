@@ -19,6 +19,7 @@ include_directories(include)
 add_library(fix_engine STATIC
     src/session.cpp
     src/connection.cpp
+    src/fix/fix_frame_decoder.cpp
 )
 
 # 为 fix_engine 库指定头文件搜索路径
