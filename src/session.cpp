@@ -23,7 +23,7 @@ class EstablishedState;
 class LogoutSentState;
 
 // =================================================================================
-// DisconnectedState
+// 断开状态
 // =================================================================================
 class DisconnectedState : public IStateHandler {
 public:
@@ -35,7 +35,7 @@ public:
 };
 
 // =================================================================================
-// LogonSentState (Client-side)
+// 已发送Logon状态（客户端）
 // =================================================================================
 class LogonSentState : public IStateHandler {
 public:
@@ -47,7 +47,7 @@ public:
 };
 
 // =================================================================================
-// EstablishedState
+// 已建立状态
 // =================================================================================
 class EstablishedState : public IStateHandler {
 private:
@@ -73,7 +73,7 @@ public:
 };
 
 // =================================================================================
-// LogoutSentState
+// 已发送Logout状态
 // =================================================================================
 class LogoutSentState : public IStateHandler {
 private:
@@ -89,7 +89,7 @@ public:
 };
 
 // =================================================================================
-// Session Class Implementation
+// Session 类实现
 // =================================================================================
 
 Session::Session(const std::string& sender,
@@ -265,22 +265,22 @@ void Session::send_test_request(const std::string& id) {
 
 
 // =================================================================================
-// State Classes Implementation
+// 状态类实现
 // =================================================================================
 
-// --- DisconnectedState ---
+// --- 断开状态 ---
 void DisconnectedState::onMessageReceived(Session& context, const FixMessage& msg) {
-    // This logic is primarily for the server side.
+    // 此逻辑主要用于服务器端。
     if (msg.get_string(tags::MsgType) == "A") {
         context.increment_recv_seq_num();
 
         if (context.senderCompID == "SERVER") {
             const int client_hb_interval = msg.get_int(tags::HeartBtInt);
-            // NOTE: A real implementation would fetch min/max from Session context,
-            // but for this example, we assume the constructor holds them.
-            // Let's assume the session holds min/max, which it now does.
-            // We need to fetch them from the context, but the context does not have getters for them yet.
-            // Let's assume a fixed range for now for simplicity in this step. A better way would be to add getters.
+            // 注意：真实实现应当从会话上下文获取最小和最大值，
+            // 此处为了示例假设构造函数已保存这些值。
+            // 假设 Session 已保存了这些值，
+            // 但当前没有相应的 getter 可用。
+            // 为简单起见暂时使用固定范围，更好的方式是提供 getter。
             const int server_min_hb = 5;
             const int server_max_hb = 120;
 
@@ -288,7 +288,7 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
                 std::cout << "Client requested HeartBtInt=" << client_hb_interval 
                           << ". Accepted. Establishing session." << std::endl;
                 
-                context.set_heart_bt_int(client_hb_interval); // Adopt client's value
+                context.set_heart_bt_int(client_hb_interval); // 采用客户端的心跳值
                 
                 auto logon_ack = create_logon_message(context.senderCompID, context.targetCompID, 1, context.get_heart_bt_int());
                 context.send(logon_ack);
@@ -305,21 +305,21 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
         context.perform_shutdown("Received non-Logon message in disconnected state.");
     }
 }
-void DisconnectedState::onTimerCheck(Session& context) {} // Do nothing
+void DisconnectedState::onTimerCheck(Session& context) {} // 无操作
 void DisconnectedState::onSessionStart(Session& context) {
-    // Client-side initiates Logon
+    // 客户端发起 Logon
     if (context.senderCompID == "CLIENT") {
         auto logon_msg = create_logon_message(context.senderCompID, context.targetCompID, 1, context.get_heart_bt_int());
         context.send(logon_msg);
         context.changeState(std::make_unique<LogonSentState>());
     } else {
-        // Server side just waits
+        // 服务器端仅等待
         std::cout << "Server session started, waiting for client Logon." << std::endl;
     }
 }
-void DisconnectedState::onLogoutRequest(Session&, const std::string&) {} // Do nothing
+void DisconnectedState::onLogoutRequest(Session&, const std::string&) {} // 无操作
 
-// --- LogonSentState ---
+// --- 已发送 Logon 状态 ---
 void LogonSentState::onMessageReceived(Session& context, const FixMessage& msg) {
     if (msg.get_string(tags::MsgType) == "A") {
         context.increment_recv_seq_num();
@@ -329,13 +329,13 @@ void LogonSentState::onMessageReceived(Session& context, const FixMessage& msg) 
         context.perform_shutdown("Received non-Logon message while waiting for Logon confirmation.");
     }
 }
-void LogonSentState::onTimerCheck(Session& context) { /* Can add logon timeout logic here */ }
-void LogonSentState::onSessionStart(Session& context) { /* Already handled */ }
+void LogonSentState::onTimerCheck(Session& context) { /* 这里可以添加登录超时逻辑 */ }
+void LogonSentState::onSessionStart(Session& context) { /* 已处理 */ }
 void LogonSentState::onLogoutRequest(Session& context, const std::string& reason) {
     context.perform_shutdown("Logout requested during logon process: " + reason);
 }
 
-// --- EstablishedState ---
+// --- 已建立状态 ---
 EstablishedState::EstablishedState() : messageHandlers_({
     {"0", &EstablishedState::handleHeartbeat},
     {"1", &EstablishedState::handleTestRequest},
@@ -351,7 +351,7 @@ void EstablishedState::onMessageReceived(Session& context, const FixMessage& msg
     if (it != messageHandlers_.end()) {
         (this->*(it->second))(context, msg);
     } else {
-        // Handle business messages or unknown types
+        // 处理业务消息或未知类型
         std::cout << "Received business message or unknown type: " << msg_type << std::endl;
     }
 }
@@ -368,21 +368,21 @@ void EstablishedState::onTimerCheck(Session& context) {
         return;
     }
 
-    // --- TestRequest Timeout Check ---
+    // --- TestRequest 超时检查 ---
     if (!awaitingTestReqId_.empty() && seconds_since_recv >= static_cast<long>(hb_interval * 1.5)) {
         context.perform_shutdown("TestRequest timeout. No response from peer.");
         return;
     }
 
-    // --- Independent Check 1: Do I need to reassure my peer? (Heartbeat) ---
-    // If we haven't sent anything for a full heartbeat interval, send one now.
+    // --- 独立检查 1：是否需要向对端发送心跳 ---
+    // 如果在一个心跳间隔内没有发送任何数据，则立刻发送心跳
     if (seconds_since_send >= hb_interval) {
         context.send_heartbeat();
     }
 
-    // --- Independent Check 2: Do I need to check on my peer? (TestRequest) ---
-    // If we haven't received anything for a while, and we are not already waiting for a TestReq response,
-    // send a TestRequest.
+    // --- 独立检查 2：是否需要测试对端连接 (TestRequest) ---
+    // 如果长时间未收到任何消息，且当前没有等待 TestReq 响应，
+    // 发送一个 TestRequest。
     if (seconds_since_recv >= static_cast<long>(hb_interval * 1.2) && awaitingTestReqId_.empty()) {
         awaitingTestReqId_ = "TestReq_" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
         context.send_test_request(awaitingTestReqId_);
@@ -410,10 +410,10 @@ void EstablishedState::handleTestRequest(Session& context, const FixMessage& msg
 
 void EstablishedState::handleLogout(Session& context, const FixMessage& msg) {
     if (logout_initiated_) {
-        // We initiated logout, this is the confirmation.
+        // 我方发起了登出，这是确认。
         context.perform_shutdown("Logout confirmation received.");
     } else {
-        // They initiated logout, we confirm and then transition to wait for a potential final confirmation from them or timeout.
+        // 对方发起了登出，我们确认后等待最终确认或超时。
         context.send_logout("Confirming peer's logout request");
         context.changeState(std::make_unique<LogoutSentState>("Peer initiated logout"));
     }
@@ -423,7 +423,7 @@ void EstablishedState::handleLogon(Session& context, const FixMessage& msg) {
     context.perform_shutdown("Logon not expected after session is established.");
 }
 
-// --- LogoutSentState ---
+// --- 已发送 Logout 状态 ---
 LogoutSentState::LogoutSentState(std::string reason) 
     : reason_(std::move(reason)), initiation_time_(std::chrono::steady_clock::now()) {}
 
@@ -433,7 +433,7 @@ void LogoutSentState::onMessageReceived(Session& context, const FixMessage& msg)
         context.perform_shutdown("Logout confirmation received.");
     } else {
         std::cout << "Warning: Received non-Logout message while waiting for Logout confirmation." << std::endl;
-        // Ignore other messages as per spec
+        // 根据规范忽略其他消息
     }
 }
 
@@ -445,7 +445,7 @@ void LogoutSentState::onTimerCheck(Session& context) {
 }
 
 void LogoutSentState::onLogoutRequest(Session&, const std::string&) {
-    // Already in the process of logging out, do nothing.
+    // 已在登出过程中，不执行任何操作。
 }
 
-} // namespace fix40
+} // fix40 名称空间结束
