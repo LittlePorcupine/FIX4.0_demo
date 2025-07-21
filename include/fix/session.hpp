@@ -43,7 +43,7 @@ public:
             const std::string& target,
             int hb,
             ShutdownCallback shutdown_cb,
-            int min_hb = 5, int max_hb = 120); // Add min/max with defaults
+            int min_hb = 5, int max_hb = 120); // 增加最小/最大心跳间隔的默认值
 
     ~Session();
 
