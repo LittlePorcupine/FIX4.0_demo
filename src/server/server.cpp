@@ -48,6 +48,12 @@ FixServer::FixServer(int port, int num_threads)
     listen_fd_ = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd_ < 0) throw std::runtime_error("Socket creation failed");
 
+    // 设置 SO_REUSEADDR 选项
+    int opt = 1;
+    if (setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
+        throw std::runtime_error("setsockopt(SO_REUSEADDR) failed");
+    }
+
     fcntl(listen_fd_, F_SETFL, O_NONBLOCK);
 
     sockaddr_in address{};

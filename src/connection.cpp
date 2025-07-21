@@ -40,8 +40,8 @@ void Connection::handle_read() {
                 return;
             }
         } else if (bytes_read == 0) {
-            // 连接被对方关闭
-            session_->on_io_error("Connection closed by peer.");
+            // 连接被对方关闭，这是一个正常的关闭事件
+            session_->on_shutdown("Connection closed by peer.");
             return;
         } else { // bytes_read < 0
             if (errno == EAGAIN || errno == EWOULDBLOCK) {

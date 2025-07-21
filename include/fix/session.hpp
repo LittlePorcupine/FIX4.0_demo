@@ -108,6 +108,11 @@ private:
     std::atomic<bool> running_{false};
 
     // --- 会话状态 (现在由 state_mutex_ 保护) ---
+    std::atomic<bool> established_{false}; // 会话是否已通过 Logon 握手建立
+    std::atomic<bool> logout_initiated_{false}; // 登出流程是否已由本端发起
+    std::string logout_reason_; // 存储登出原因
+    std::chrono::steady_clock::time_point logout_initiation_time_; // 登出开始时间
+
     int sendSeqNum = 1;
     int recvSeqNum = 1;
     std::string awaitingTestReqId;

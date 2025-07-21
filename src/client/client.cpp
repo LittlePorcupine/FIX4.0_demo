@@ -83,9 +83,10 @@ bool Client::connect(const std::string& ip, int port) {
         });
     });
 
-    auto logon = create_logon_message("CLIENT", "SERVER", 1, 30);
-    session_->send(logon);
-    std::cout << "Logon message sent." << std::endl;
+    // Logon is now sent from within session->start()
+    // auto logon = create_logon_message("CLIENT", "SERVER", 1, 30);
+    // session_->send(logon);
+    // std::cout << "Logon message sent." << std::endl;
 
     return true;
 }
