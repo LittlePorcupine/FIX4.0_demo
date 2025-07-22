@@ -9,11 +9,18 @@
 #include <string.h>
 #include <sys/socket.h> // 为了使用 send()
 #include <mutex> // 为了线程安全
+#include <vector>
 
 namespace fix40 {
 
 Connection::Connection(int fd, Reactor* reactor, std::shared_ptr<Session> session)
-    : fd_(fd), reactor_(reactor), session_(std::move(session)) {
+    : fd_(fd),
+      reactor_(reactor),
+      session_(std::move(session)),
+      frame_decoder_(
+          Config::instance().get_int("protocol", "max_buffer_size", 1048576),
+          Config::instance().get_int("protocol", "max_body_length", 4096)
+      ) {
     std::cout << "Connection created for fd " << fd_ << std::endl;
 }
 
@@ -29,15 +36,15 @@ void Connection::handle_read() {
     // 防止从已关闭的连接读取
     if (is_closed_) return;
 
-    char read_buf[Config::instance().get_int("protocol", "read_buffer_size", 4096)];
+    std::vector<char> read_buf(Config::instance().get_int("protocol", "max_buffer_size", 4096));
     ssize_t bytes_read = 0;
 
     // ET 模式需要一直读到缓冲空
     // 使用 while 循环简化读取逻辑
     while (true) {
-        bytes_read = ::read(fd_, read_buf, sizeof(read_buf));
+        bytes_read = ::read(fd_, read_buf.data(), read_buf.size());
         if (bytes_read > 0) {
-            frame_decoder_.append(read_buf, bytes_read);
+            frame_decoder_.append(read_buf.data(), bytes_read);
         } else {
             break; // 读取完成或遇到错误
         }
@@ -57,26 +64,16 @@ void Connection::handle_read() {
         }
     }
 
-    // 现在处理累积的缓冲
-    std::string raw_msg;
-    while (true) {
-        try {
-            if (!frame_decoder_.next_message(raw_msg)) {
-                // 没有更多完整的消息了
-                break;
-            }
-
-            // 已经抽出一个完整消息，进行处理
+    try {
+        // 现在处理累积的缓冲
+        std::string raw_msg;
+        while (frame_decoder_.next_message(raw_msg)) {
+            FixMessage fix_msg = session_->codec_.decode(raw_msg);
             std::cout << "<<< RECV (" << fd_ << "): " << raw_msg << std::endl;
-            FixMessage msg = session_->codec_.decode(raw_msg);
-            session_->on_message_received(std::move(msg));
-
-        } catch (const std::exception& e) {
-            // 分帧或解码出错
-            session_->on_io_error(std::string("Protocol error: ") + e.what());
-            // 出现协议错误后，连接通常应被关闭，这里简单返回
-            return;
+            session_->on_message_received(fix_msg);
         }
+    } catch (const std::exception& e) {
+        session_->on_io_error("Frame decoder or parser error: " + std::string(e.what()));
     }
 }
 

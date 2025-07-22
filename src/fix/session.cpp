@@ -307,7 +307,7 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
         context.perform_shutdown("Received non-Logon message in disconnected state.");
     }
 }
-void DisconnectedState::onTimerCheck(Session& context) {} // 无操作
+void DisconnectedState::onTimerCheck([[maybe_unused]] Session& context) {} // 无操作
 void DisconnectedState::onSessionStart(Session& context) {
     // 客户端发起 Logon
     if (context.senderCompID == "CLIENT") {
@@ -319,7 +319,7 @@ void DisconnectedState::onSessionStart(Session& context) {
         std::cout << "Server session started, waiting for client Logon." << std::endl;
     }
 }
-void DisconnectedState::onLogoutRequest(Session&, const std::string&) {} // 无操作
+void DisconnectedState::onLogoutRequest([[maybe_unused]] Session& context, [[maybe_unused]] const std::string& reason) {} // 无操作
 
 // --- 已发送 Logon 状态 ---
 void LogonSentState::onMessageReceived(Session& context, const FixMessage& msg) {
@@ -331,8 +331,8 @@ void LogonSentState::onMessageReceived(Session& context, const FixMessage& msg) 
         context.perform_shutdown("Received non-Logon message while waiting for Logon confirmation.");
     }
 }
-void LogonSentState::onTimerCheck(Session& context) { /* 这里可以添加登录超时逻辑 */ }
-void LogonSentState::onSessionStart(Session& context) { /* 已处理 */ }
+void LogonSentState::onTimerCheck([[maybe_unused]] Session& context) { /* 这里可以添加登录超时逻辑 */ }
+void LogonSentState::onSessionStart([[maybe_unused]] Session& context) { /* 已处理 */ }
 void LogonSentState::onLogoutRequest(Session& context, const std::string& reason) {
     context.perform_shutdown("Logout requested during logon process: " + reason);
 }
@@ -412,7 +412,7 @@ void EstablishedState::handleTestRequest(Session& context, const FixMessage& msg
     context.send_heartbeat(msg.get_string(tags::TestReqID));
 }
 
-void EstablishedState::handleLogout(Session& context, const FixMessage& msg) {
+void EstablishedState::handleLogout(Session& context, [[maybe_unused]] const FixMessage& msg) {
     if (logout_initiated_) {
         // 我方发起了登出，这是确认。
         context.perform_shutdown("Logout confirmation received.");
@@ -423,7 +423,7 @@ void EstablishedState::handleLogout(Session& context, const FixMessage& msg) {
     }
 }
 
-void EstablishedState::handleLogon(Session& context, const FixMessage& msg) {
+void EstablishedState::handleLogon(Session& context, [[maybe_unused]] const FixMessage& msg) {
     context.perform_shutdown("Logon not expected after session is established.");
 }
 
@@ -448,7 +448,7 @@ void LogoutSentState::onTimerCheck(Session& context) {
     }
 }
 
-void LogoutSentState::onLogoutRequest(Session&, const std::string&) {
+void LogoutSentState::onLogoutRequest([[maybe_unused]] Session& context, [[maybe_unused]] const std::string& reason) {
     // 已在登出过程中，不执行任何操作。
 }
 
