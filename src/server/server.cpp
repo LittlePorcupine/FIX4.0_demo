@@ -1,4 +1,4 @@
-#include "server.hpp"
+#include "server/server.hpp"
 
 #include <iostream>
 #include <csignal>
@@ -89,17 +89,23 @@ void FixServer::start() {
 
     // 将服务器端口 fd 添入 reactor 以接受新连接
     reactor_->add_fd(listen_fd_, [this](int) {
-        sockaddr_in client_addr{};
-        socklen_t client_len = sizeof(client_addr);
-        int client_fd = accept(listen_fd_, (struct sockaddr*)&client_addr, &client_len);
+        while (true) {
+            sockaddr_in client_addr{};
+            socklen_t client_len = sizeof(client_addr);
+            int client_fd = accept(listen_fd_, (struct sockaddr*)&client_addr, &client_len);
 
-        if (client_fd < 0) {
-            if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                std::cerr << "Accept failed" << std::endl;
+            if (client_fd < 0) {
+                // 在 ET 模式下，我们需要读到 EAGAIN 或 EWOULDBLOCK
+                // 这表示当前没有更多的连接可接受
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    break;
+                }
+                // 其他错误则需要记录
+                std::cerr << "Accept failed with error: " << strerror(errno) << std::endl;
+                break;
             }
-            return;
+            on_new_connection(client_fd);
         }
-        on_new_connection(client_fd);
     });
 
     reactor_->run(); // 此调用会阻塞直到调用 stop()
