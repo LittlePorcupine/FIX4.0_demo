@@ -17,8 +17,8 @@ include_directories(include)
 
 # 1. 创建一个静态库 "fix_engine" 用于存放核心逻辑
 add_library(fix_engine STATIC
-    src/session.cpp
-    src/connection.cpp
+    src/fix/session.cpp
+    src/core/connection.cpp
     src/fix/fix_frame_decoder.cpp
 )
 
