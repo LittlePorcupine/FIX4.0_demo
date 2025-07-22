@@ -42,8 +42,7 @@ public:
     Session(const std::string& sender,
             const std::string& target,
             int hb,
-            ShutdownCallback shutdown_cb,
-            int min_hb = 5, int max_hb = 120); // 增加最小/最大心跳间隔的默认值
+            ShutdownCallback shutdown_cb);
 
     ~Session();
 
@@ -99,6 +98,8 @@ public:
     std::chrono::steady_clock::time_point get_last_send_time() const;
     int get_heart_bt_int() const;
     void set_heart_bt_int(int new_hb);
+    int get_min_heart_bt_int() const;
+    int get_max_heart_bt_int() const;
 
     // --- 序列号管理 ---
     int get_send_seq_num() { return sendSeqNum; }

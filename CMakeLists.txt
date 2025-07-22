@@ -20,6 +20,7 @@ add_library(fix_engine STATIC
     src/fix/session.cpp
     src/core/connection.cpp
     src/fix/fix_frame_decoder.cpp
+    src/base/config.cpp
 )
 
 # 为 fix_engine 库指定头文件搜索路径
@@ -47,6 +48,14 @@ if (UNIX)
     target_link_libraries(fix_client PRIVATE Threads::Threads)
 endif()
 
+# 将 config.ini 文件复制到构建目录
+configure_file(
+    "${CMAKE_SOURCE_DIR}/config.ini"
+    "${CMAKE_BINARY_DIR}/config.ini"
+    COPYONLY
+)
+
 # 打印出可执行文件的路径，方便用户
 message(STATUS "Server executable: ${CMAKE_BINARY_DIR}/fix_server")
 message(STATUS "Client executable: ${CMAKE_BINARY_DIR}/fix_client")
+message(STATUS "Config file: ${CMAKE_BINARY_DIR}/config.ini")

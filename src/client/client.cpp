@@ -2,6 +2,7 @@
 #include "core/reactor.hpp"
 #include "base/thread_pool.hpp"
 #include "base/timing_wheel.hpp"
+#include "base/config.hpp"
 #include "core/connection.hpp"
 #include "fix/session.hpp"
 #include "fix/fix_messages.hpp"
@@ -15,9 +16,13 @@
 namespace fix40 {
 
 Client::Client() {
-    worker_pool_ = std::make_unique<ThreadPool>(2); // 客户端不需要很多工作线
+    auto& config = Config::instance();
+    worker_pool_ = std::make_unique<ThreadPool>(config.get_int("client", "worker_threads", 2));
     reactor_ = std::make_unique<Reactor>();
-    timing_wheel_ = std::make_unique<TimingWheel>(60, 1000);
+    timing_wheel_ = std::make_unique<TimingWheel>(
+        config.get_int("timing_wheel", "slots", 60),
+        config.get_int("timing_wheel", "tick_interval_ms", 1000)
+    );
 }
 
 Client::~Client() {
@@ -54,8 +59,10 @@ bool Client::connect(const std::string& ip, int port) {
     fcntl(sock, F_SETFL, O_NONBLOCK);
     std::cout << "Connected to server." << std::endl;
 
+    auto& config = Config::instance();
+
     // 设置主定时器来驱动时钟轮
-    reactor_->add_timer(1000, [this]([[maybe_unused]] int timer_fd) {
+    reactor_->add_timer(config.get_int("timing_wheel", "tick_interval_ms", 1000), [this]([[maybe_unused]] int timer_fd) {
 #ifdef __linux__
         uint64_t expirations;
         read(timer_fd, &expirations, sizeof(expirations));
@@ -67,7 +74,12 @@ bool Client::connect(const std::string& ip, int port) {
         on_connection_close();
     };
 
-    session_ = std::make_shared<Session>("CLIENT", "SERVER", 30, close_cb);
+    session_ = std::make_shared<Session>(
+        config.get("client", "sender_comp_id", "CLIENT"),
+        config.get("client", "target_comp_id", "SERVER"),
+        config.get_int("fix_session", "default_heartbeat_interval", 30),
+        close_cb
+    );
     connection_ = std::make_shared<Connection>(sock, reactor_.get(), session_);
     session_->set_connection(connection_); // 设置反向引用
 

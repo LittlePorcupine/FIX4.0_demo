@@ -9,6 +9,7 @@
 #include "core/connection.hpp"
 #include "fix/fix_messages.hpp"
 #include "base/timing_wheel.hpp"
+#include "base/config.hpp"
 
 
 namespace fix40 {
@@ -95,18 +96,18 @@ public:
 Session::Session(const std::string& sender,
                  const std::string& target,
                  int hb,
-                 ShutdownCallback shutdown_cb,
-                 int min_hb, int max_hb)
+                 ShutdownCallback shutdown_cb)
     : senderCompID(sender),
       targetCompID(target),
       heartBtInt(hb),
-      minHeartBtInt_(min_hb),
-      maxHeartBtInt_(max_hb),
+      minHeartBtInt_(Config::instance().get_int("fix_session", "min_heartbeat_interval", 5)),
+      maxHeartBtInt_(Config::instance().get_int("fix_session", "max_heartbeat_interval", 120)),
       shutdown_callback_(std::move(shutdown_cb)) {
 
+    // 初始状态为断开
     currentState_ = std::make_unique<DisconnectedState>();
-    lastRecv = std::chrono::steady_clock::now();
-    lastSend = std::chrono::steady_clock::now();
+    update_last_recv_time();
+    update_last_send_time();
 }
 
 Session::~Session() {
@@ -227,25 +228,26 @@ std::chrono::steady_clock::time_point Session::get_last_recv_time() const { retu
 std::chrono::steady_clock::time_point Session::get_last_send_time() const { return lastSend; }
 int Session::get_heart_bt_int() const { return heartBtInt; }
 void Session::set_heart_bt_int(int new_hb) { heartBtInt = new_hb; }
+int Session::get_min_heart_bt_int() const { return minHeartBtInt_; }
+int Session::get_max_heart_bt_int() const { return maxHeartBtInt_; }
 
 
 // ... [其它辅助函数的实现]
 
 void Session::schedule_timer_tasks(TimingWheel* wheel) {
-    if (!wheel) return;
+    if (!wheel || !running_) return; // 如果会话已停止，则不重新调度
+
     std::weak_ptr<Session> weak_self = shared_from_this();
-    auto timer_task = std::make_shared<std::function<void()>>();
-    *timer_task = [weak_self, wheel, timer_task]() {
+
+    wheel->add_task(1000, [weak_self, wheel]() {
         if (auto self = weak_self.lock()) {
             if (self->is_running()) {
                 self->on_timer_check();
-                // 高频检查：每 1000 ms 触发一次
-                wheel->add_task(1000, *timer_task);
+                // 任务完成，重新调度下一次
+                self->schedule_timer_tasks(wheel);
             }
         }
-    };
-    // 首次调度 1 秒后触发
-    wheel->add_task(1000, *timer_task);
+    });
 }
 
 void Session::send_logout(const std::string& reason) {
@@ -281,8 +283,8 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
             // 假设 Session 已保存了这些值，
             // 但当前没有相应的 getter 可用。
             // 为简单起见暂时使用固定范围，更好的方式是提供 getter。
-            const int server_min_hb = 5;
-            const int server_max_hb = 120;
+            const int server_min_hb = context.get_min_heart_bt_int();
+            const int server_max_hb = context.get_max_heart_bt_int();
 
             if (client_hb_interval >= server_min_hb && client_hb_interval <= server_max_hb) {
                 std::cout << "Client requested HeartBtInt=" << client_hb_interval 
@@ -363,13 +365,15 @@ void EstablishedState::onTimerCheck(Session& context) {
     const int hb_interval = context.get_heart_bt_int();
 
     if (logout_initiated_ && 
-        std::chrono::duration_cast<std::chrono::seconds>(now - logout_initiation_time_).count() >= 10) {
-        context.perform_shutdown("Logout confirmation not received within 10 seconds.");
+        std::chrono::duration_cast<std::chrono::seconds>(now - logout_initiation_time_).count() >= 
+            Config::instance().get_int("fix_session", "logout_confirm_timeout_sec", 10)) {
+        context.perform_shutdown("Logout confirmation not received within timeout.");
         return;
     }
 
     // --- TestRequest 超时检查 ---
-    if (!awaitingTestReqId_.empty() && seconds_since_recv >= static_cast<long>(hb_interval * 1.5)) {
+    if (!awaitingTestReqId_.empty() && seconds_since_recv >= 
+        static_cast<long>(hb_interval * Config::instance().get_double("fix_session", "test_request_timeout_multiplier", 1.5))) {
         context.perform_shutdown("TestRequest timeout. No response from peer.");
         return;
     }

@@ -1,6 +1,8 @@
 #include "client/client.hpp"
+#include "base/config.hpp"
 #include <iostream>
 #include <csignal>
+#include <filesystem>
 
 int main(int argc, char* argv[]) {
     // 当写入已被关闭读取端的套接字时，此设置可防止程序退出，
@@ -8,8 +10,22 @@ int main(int argc, char* argv[]) {
     signal(SIGPIPE, SIG_IGN);
 
     try {
-        std::string ip = "127.0.0.1";
-        int port = 9000;
+        // 加载配置
+        std::string config_path = "config.ini";
+        if (!std::filesystem::exists(config_path)) {
+            if (argc > 0 && std::filesystem::exists(std::filesystem::path(argv[0]).parent_path() / "config.ini")) {
+                config_path = std::filesystem::path(argv[0]).parent_path() / "config.ini";
+            }
+        }
+        if (!fix40::Config::instance().load(config_path)) {
+            std::cerr << "Fatal: Failed to load config file from " << config_path << std::endl;
+            return 1;
+        }
+        std::cout << "Config loaded from " << std::filesystem::absolute(config_path) << std::endl;
+
+        auto& config = fix40::Config::instance();
+        std::string ip = config.get("client", "server_ip", "127.0.0.1");
+        int port = config.get_int("client", "server_port", 9000);
 
         if (argc > 1) {
             ip = argv[1];

@@ -1,5 +1,5 @@
 #include "server/server.hpp"
-
+#include "base/config.hpp"
 #include <iostream>
 #include <csignal>
 
@@ -29,14 +29,18 @@ void FixServer::signal_handler(int signum) {
 FixServer::FixServer(int port, int num_threads)
     : port_(port), listen_fd_(-1) {
 
+    auto& config = Config::instance();
     worker_pool_ = std::make_unique<ThreadPool>(num_threads > 0 ? num_threads : std::thread::hardware_concurrency());
     reactor_ = std::make_unique<Reactor>();
-    timing_wheel_ = std::make_unique<TimingWheel>(60, 1000); // 60 个槽，间隔 1 秒
+    timing_wheel_ = std::make_unique<TimingWheel>(
+        config.get_int("timing_wheel", "slots", 60),
+        config.get_int("timing_wheel", "tick_interval_ms", 1000)
+    );
 
     instance_for_signal_ = this;
 
     // 设置驱动时钟轮的主定时器
-    reactor_->add_timer(1000, [this]([[maybe_unused]] int timer_fd) {
+    reactor_->add_timer(config.get_int("timing_wheel", "tick_interval_ms", 1000), [this]([[maybe_unused]] int timer_fd) {
 #ifdef __linux__
         // Linux 上需要清空 timerfd
         uint64_t expirations;
@@ -65,7 +69,7 @@ FixServer::FixServer(int port, int num_threads)
         throw std::runtime_error("Bind failed");
     }
 
-    if (listen(listen_fd_, 10) < 0) {
+    if (listen(listen_fd_, config.get_int("server", "listen_backlog", 128)) < 0) {
         throw std::runtime_error("Listen failed");
     }
 

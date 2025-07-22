@@ -1,4 +1,5 @@
 #include "fix/fix_frame_decoder.hpp"
+#include "base/config.hpp"
 #include <stdexcept>
 #include <iostream>
 
@@ -37,7 +38,7 @@ bool FixFrameDecoder::next_message(std::string& message) {
     try {
         const std::string body_length_str = buffer_.substr(body_length_val_pos, body_length_end_pos - body_length_val_pos);
         body_length = std::stoi(body_length_str);
-        if (body_length < 0 || body_length > 4096) { // 基本有效性检查
+        if (body_length < 0 || body_length > Config::instance().get_int("protocol", "max_body_length", 4096)) { // 基本有效性检查
             throw std::runtime_error("Invalid BodyLength value");
         }
     } catch (const std::exception&) {

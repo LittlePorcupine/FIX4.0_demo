@@ -1,6 +1,7 @@
 #include "core/connection.hpp"
 #include "fix/session.hpp"
 #include "core/reactor.hpp"
+#include "base/config.hpp"
 
 #include <unistd.h>
 #include <iostream>
@@ -28,7 +29,7 @@ void Connection::handle_read() {
     // 防止从已关闭的连接读取
     if (is_closed_) return;
 
-    char read_buf[4096];
+    char read_buf[Config::instance().get_int("protocol", "read_buffer_size", 4096)];
     ssize_t bytes_read = 0;
 
     // ET 模式需要一直读到缓冲空

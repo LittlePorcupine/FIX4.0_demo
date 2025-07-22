@@ -2,6 +2,7 @@
 
 #include "fix/fix_codec.hpp"
 #include "fix/fix_tags.hpp"
+#include "base/config.hpp"
 
 namespace fix40 {
 
@@ -11,7 +12,7 @@ namespace fix40 {
 inline FixMessage create_logon_message(const std::string& sender,
                                        const std::string& target,
                                        int seq_num = 1,
-                                       int heart_bt = 30) {
+                                       int heart_bt = Config::instance().get_int("fix_session", "default_heartbeat_interval", 30)) {
     FixMessage logon;
     logon.set(tags::MsgType, "A");
     logon.set(tags::EncryptMethod, "0");
