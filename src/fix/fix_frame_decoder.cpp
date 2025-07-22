@@ -5,7 +5,14 @@
 
 namespace fix40 {
 
+FixFrameDecoder::FixFrameDecoder(size_t max_buffer_size, size_t max_body_length)
+    : max_buffer_size_(max_buffer_size), max_body_length_(max_body_length) {}
+
 void FixFrameDecoder::append(const char* data, size_t len) {
+    if (buffer_.size() + len > max_buffer_size_) {
+        // 让上层 Connection 或 Session 来决定如何处理这个错误
+        throw std::runtime_error("Buffer size limit exceeded. Closing connection.");
+    }
     buffer_.append(data, len);
 }
 
@@ -38,7 +45,7 @@ bool FixFrameDecoder::next_message(std::string& message) {
     try {
         const std::string body_length_str = buffer_.substr(body_length_val_pos, body_length_end_pos - body_length_val_pos);
         body_length = std::stoi(body_length_str);
-        if (body_length < 0 || body_length > Config::instance().get_int("protocol", "max_body_length", 4096)) { // 基本有效性检查
+        if (body_length < 0 || static_cast<size_t>(body_length) > max_body_length_) { // 基本有效性检查
             throw std::runtime_error("Invalid BodyLength value");
         }
     } catch (const std::exception&) {

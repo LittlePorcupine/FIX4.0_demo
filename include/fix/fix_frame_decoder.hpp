@@ -7,6 +7,7 @@ namespace fix40 {
 
 class FixFrameDecoder {
 public:
+    explicit FixFrameDecoder(size_t max_buffer_size, size_t max_body_length);
     // 向内部缓冲区追加新的数据
     void append(const char* data, size_t len);
 
@@ -17,6 +18,8 @@ public:
 
 private:
     std::string buffer_;
+    const size_t max_buffer_size_;
+    const size_t max_body_length_;
 };
 
 } // namespace fix40 
