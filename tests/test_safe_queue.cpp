@@ -282,6 +282,7 @@ void test_multithreaded_enqueue_dequeue() {
         }
     }
     producers_done.store(true);
+    queue.stop();
     
     // 给消费者一些时间完成剩余工作
     std::this_thread::sleep_for(std::chrono::milliseconds(100));

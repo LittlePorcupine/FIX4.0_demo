@@ -3,6 +3,7 @@
 #include <cassert>
 #include <stdexcept>
 #include <climits>
+#include <cstdint>
 #include <string>
 #include <functional>
 #include <cstring>
