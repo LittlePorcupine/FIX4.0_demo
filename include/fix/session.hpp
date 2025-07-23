@@ -9,7 +9,7 @@
 
 #include "fix/fix_codec.hpp"
 // #include "fix_events.hpp" // 2. 不再需要 events
-#include "base/safe_queue.hpp"
+#include "base/concurrentqueue.h" // <--- 改为使用 moodycamel
 #include "base/timing_wheel.hpp"
 
 namespace fix40 {
@@ -126,7 +126,7 @@ private:
     ShutdownCallback shutdown_callback_;
     std::weak_ptr<Connection> connection_; // 取代 SendCallback
 
-    SafeQueue<std::string> outbound_q_;
+    moodycamel::ConcurrentQueue<std::string> outbound_q_; // <--- 改为使用 moodycamel
 
     std::atomic<bool> running_{false};
 

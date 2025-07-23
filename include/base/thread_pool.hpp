@@ -7,7 +7,7 @@
 #include <type_traits> // 供 std::invoke_result_t 使用
 #include <atomic>
 
-#include "base/safe_queue.hpp"
+#include "base/blockingconcurrentqueue.h" // 使用 moodycamel 的阻塞队列
 
 namespace fix40 {
 
@@ -24,7 +24,7 @@ public:
 
 private:
     std::vector<std::thread> workers_;
-    SafeQueue<std::function<void()>> tasks_;
+    moodycamel::BlockingConcurrentQueue<std::function<void()>> tasks_; // 替换为 BlockingConcurrentQueue
 
     std::atomic<bool> stop_;
     size_t thread_count_;
@@ -36,8 +36,10 @@ inline ThreadPool::ThreadPool(size_t threads) : stop_(false), thread_count_(thre
     for(size_t i = 0; i < threads; ++i) {
         workers_.emplace_back([this] {
             std::function<void()> task;
-            while (this->tasks_.pop(task)) {
-                task();
+            // 使用 wait_dequeue 实现高效阻塞
+            while (!stop_) {
+                tasks_.wait_dequeue(task);
+                if (task) task();
             }
         });
     }
@@ -69,7 +71,10 @@ inline size_t ThreadPool::get_thread_count() const {
 
 inline ThreadPool::~ThreadPool() {
     stop_ = true;
-    tasks_.stop();
+    // 发送与线程数相同的空任务以唤醒所有等待中的线程
+    for(size_t i = 0; i < workers_.size(); ++i) {
+        tasks_.enqueue(nullptr);
+    }
     for(std::thread &worker: workers_) {
         worker.join();
     }
