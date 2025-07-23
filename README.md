@@ -46,54 +46,54 @@
 ```mermaid
 graph TB
     subgraph "应用层 (Application Layer)"
-        FixServer["🖥️ FixServer<br/>多连接服务器"]
-        Client["💻 Client<br/>交互式客户端"]
+        FixServer["FixServer<br/>多连接服务器"]
+        Client["Client<br/>交互式客户端"]
     end
-    
+
     subgraph "协议层 (Protocol Layer)"
-        Session["🔄 Session<br/>状态机管理"]
-        FixCodec["📝 FixCodec<br/>消息编解码"]
-        FrameDecoder["🔍 FixFrameDecoder<br/>帧分割器"]
+        Session["Session<br/>状态机管理"]
+        FixCodec["FixCodec<br/>消息编解码"]
+        FrameDecoder["FixFrameDecoder<br/>帧分割器"]
     end
-    
+
     subgraph "核心层 (Core Layer)"
-        Reactor["⚡ Reactor<br/>事件循环"]
-        Connection["🔗 Connection<br/>连接抽象"]
+        Reactor["Reactor<br/>事件循环"]
+        Connection["Connection<br/>连接抽象"]
     end
-    
+
     subgraph "基础层 (Foundation Layer)"
-        ThreadPool["🧵 ThreadPool<br/>线程池"]
-        SafeQueue["📦 SafeQueue<br/>安全队列"]
-        TimingWheel["⏰ TimingWheel<br/>时间轮"]
-        Config["⚙️ Config<br/>配置管理"]
+        ThreadPool["ThreadPool<br/>线程池"]
+        SafeQueue["SafeQueue<br/>安全队列"]
+        TimingWheel["TimingWheel<br/>时间轮"]
+        Config["Config<br/>配置管理"]
     end
-    
+
     %% 依赖关系
     FixServer --> Session
     FixServer --> Reactor
     FixServer --> ThreadPool
     FixServer --> TimingWheel
-    
+
     Client --> Session
     Client --> Reactor
     Client --> ThreadPool
     Client --> TimingWheel
-    
+
     Session --> FixCodec
     Session --> Connection
-    
+
     Connection --> FrameDecoder
     Connection --> Reactor
-    
+
     Reactor --> Config
     Session --> SafeQueue
-    
+
     %% 样式
     classDef appLayer fill:#e1f5fe
     classDef protocolLayer fill:#f3e5f5
     classDef coreLayer fill:#e8f5e8
     classDef baseLayer fill:#fff3e0
-    
+
     class FixServer,Client appLayer
     class Session,FixCodec,FrameDecoder protocolLayer
     class Reactor,Connection coreLayer
@@ -194,26 +194,26 @@ Type 'logout' to disconnect.
 sequenceDiagram
     participant C as Client
     participant S as Server
-    
+
     Note over C,S: 1. 连接建立
     C->>S: TCP Connect
-    
+
     Note over C,S: 2. FIX 登录
     C->>S: Logon (A)
     S->>C: Logon (A) - 确认
-    
+
     Note over C,S: 3. 心跳维持
     loop 每 HeartBtInt 秒
         C->>S: Heartbeat (0)
         S->>C: Heartbeat (0)
     end
-    
+
     Note over C,S: 4. 连接检测
-    alt 长时间无消息
+    opt 长时间无消息
         C->>S: TestRequest (1)
         S->>C: Heartbeat (0) with TestReqID
     end
-    
+
     Note over C,S: 5. 优雅登出
     C->>S: Logout (5)
     S->>C: Logout (5) - 确认
@@ -242,7 +242,7 @@ sequenceDiagram
     participant Session as Session
     participant Conn as Connection
 
-    Note over Main,Conn: 🚀 系统启动阶段
+    Note over Main,Conn: 系统启动阶段
     Main->>Server: 创建服务器实例
     Server->>Reactor: 初始化事件循环
     Server->>Worker: 创建线程池
@@ -250,7 +250,7 @@ sequenceDiagram
     Server->>Reactor: 注册监听socket
     Server->>Reactor: 启动定时器(1秒)
     
-    Note over Main,Conn: 🔄 事件循环运行
+    Note over Main,Conn: 事件循环运行
     loop Reactor事件循环
         Reactor->>Reactor: epoll_wait/kevent
         alt 新连接到达
@@ -271,9 +271,9 @@ sequenceDiagram
             Reactor->>Timer: 时间轮tick
             Timer->>Session: 执行心跳检查
         end
-    end
-    
-    Note over Main,Conn: 🛑 优雅关闭
+    end  %% <-- 这里是添加的，用于闭合 loop 循环
+
+    Note over Main,Conn: 优雅关闭
     Main->>Server: 收到SIGINT信号
     Server->>Reactor: 停止事件循环
     Server->>Session: 通知所有会话关闭
@@ -287,26 +287,26 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> Disconnected: 会话创建
-    
+
     Disconnected --> LogonSent: 客户端发送Logon
     Disconnected --> Disconnected: 服务器等待Logon
-    
+
     LogonSent --> Established: 收到Logon确认
     LogonSent --> Disconnected: 登录失败/超时
-    
+
     Established --> Established: 正常消息交换
     Established --> Established: 心跳维持
     Established --> LogoutSent: 发起登出
-    
+
     LogoutSent --> Disconnected: 收到Logout确认
     LogoutSent --> Disconnected: 登出超时
-    
+
     Disconnected --> [*]: 会话销毁
-    
+
     note right of Established
         在此状态下处理:
         • Heartbeat (0)
-        • TestRequest (1) 
+        • TestRequest (1)
         • 业务消息
         • 心跳超时检测
     end note
@@ -340,18 +340,18 @@ graph TB
             WN[Watchdog线程]
         end
         
-        Problem1["❌ 线程数 = 4 × N<br/>❌ 资源消耗大<br/>❌ 上下文切换频繁<br/>❌ 扩展性差"]
+        Problem1["线程数 = 4 × N<br/>资源消耗大<br/>上下文切换频繁<br/>扩展性差"]
     end
     
     subgraph "当前模型 (生产级) - O(1) 线程模型"
-        ReactorThread["⚡ Reactor线程<br/>(单一I/O事件循环)"]
-        WorkerPool["🧵 Worker线程池<br/>(固定大小)"]
-        GlobalTimer["⏰ 全局时间轮<br/>(统一定时管理)"]
+        ReactorThread["Reactor线程<br/>(单一I/O事件循环)"]
+        WorkerPool["Worker线程池<br/>(固定大小)"]
+        GlobalTimer["全局时间轮<br/>(统一定时管理)"]
         
         ReactorThread --> WorkerPool
         GlobalTimer --> WorkerPool
         
-        Benefit["✅ 线程数恒定<br/>✅ 高并发支持<br/>✅ 资源利用率高<br/>✅ 易于扩展"]
+        Benefit["线程数恒定<br/>高并发支持<br/>资源利用率高<br/>易于扩展"]
     end
     
     classDef oldModel fill:#ffebee,stroke:#f44336
@@ -374,14 +374,6 @@ graph TB
 | 上下文切换 | 频繁 | 最小化 | ⚡ 延迟降低50%+ |
 | 并发连接 | 受限 (~100) | 海量 (10000+) | 📈 提升100倍 |
 | CPU利用率 | 低效 | 高效 | 🎯 提升3-5倍 |
-
-### 性能指标
-
-- **并发连接**: 支持数千个同时 FIX 会话
-- **消息延迟**: 微秒级消息处理延迟
-- **吞吐量**: 每秒处理数万条 FIX 消息
-- **内存效率**: 智能指针和 RAII，零内存泄漏
-- **CPU 利用率**: 事件驱动架构，高效的 CPU 使用
 
 ## 🔧 配置说明
 
@@ -420,31 +412,31 @@ max_buffer_size = 1048576     # TCP 缓冲区最大大小
 ```mermaid
 graph LR
     subgraph "网络I/O层"
-        Socket[TCP Socket]
-        Reactor[Reactor<br/>事件分发器]
+        Socket[TCP Socket]:::networkLayer
+        Reactor[Reactor<br/>事件分发器]:::networkLayer
     end
     
     subgraph "连接管理层"
-        Connection[Connection<br/>连接抽象]
-        FrameDecoder[FrameDecoder<br/>帧解析器]
-        WriteBuffer[写缓冲区]
+        Connection[Connection<br/>连接抽象]:::connectionLayer
+        FrameDecoder[FrameDecoder<br/>帧解析器]:::connectionLayer
+        WriteBuffer[写缓冲区]:::connectionLayer
     end
     
     subgraph "会话协议层"
-        Session[Session<br/>会话状态机]
-        StateHandler[StateHandler<br/>状态处理器]
-        FixCodec[FixCodec<br/>消息编解码]
+        Session[Session<br/>会话状态机]:::sessionLayer
+        StateHandler[StateHandler<br/>状态处理器]:::sessionLayer
+        FixCodec[FixCodec<br/>消息编解码]:::sessionLayer
     end
     
     subgraph "定时任务层"
-        TimingWheel[TimingWheel<br/>时间轮]
-        HeartbeatTask[心跳任务]
-        TimeoutTask[超时检测]
+        TimingWheel[TimingWheel<br/>时间轮]:::timerLayer
+        HeartbeatTask[心跳任务]:::timerLayer
+        TimeoutTask[超时检测]:::timerLayer
     end
     
     subgraph "线程池层"
-        ThreadPool[ThreadPool<br/>工作线程池]
-        SafeQueue[SafeQueue<br/>任务队列]
+        ThreadPool[ThreadPool<br/>工作线程池]:::threadLayer
+        SafeQueue[SafeQueue<br/>任务队列]:::threadLayer
     end
     
     %% 数据流向
@@ -471,17 +463,11 @@ graph LR
     SafeQueue -->|工作线程| Connection
     
     %% 样式定义
-    classDef networkLayer fill:#ffebee
-    classDef connectionLayer fill:#e8f5e8
-    classDef sessionLayer fill:#e3f2fd
-    classDef timerLayer fill:#fff3e0
-    classDef threadLayer fill:#f3e5f5
-    
-    class Socket,Reactor networkLayer
-    class Connection,FrameDecoder,WriteBuffer connectionLayer
-    class Session,StateHandler,FixCodec sessionLayer
-    class TimingWheel,HeartbeatTask,TimeoutTask timerLayer
-    class ThreadPool,SafeQueue threadLayer
+    classDef networkLayer fill:#ffebee,stroke:#c62828,stroke-width:2px
+    classDef connectionLayer fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    classDef sessionLayer fill:#e3f2fd,stroke:#0277bd,stroke-width:2px
+    classDef timerLayer fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    classDef threadLayer fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px
 ```
 
 ## 🧩 核心组件详解
