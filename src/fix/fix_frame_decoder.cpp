@@ -9,7 +9,9 @@ FixFrameDecoder::FixFrameDecoder(size_t max_buffer_size, size_t max_body_length)
     : max_buffer_size_(max_buffer_size), max_body_length_(max_body_length) {}
 
 void FixFrameDecoder::append(const char* data, size_t len) {
-    if (buffer_.size() + len > max_buffer_size_) {
+    // Safe overflow prevention: use subtraction instead of addition
+    // This prevents integer overflow when buffer_.size() + len would exceed SIZE_MAX
+    if (buffer_.size() >= max_buffer_size_ || len > max_buffer_size_ - buffer_.size()) {
         // 让上层 Connection 或 Session 来决定如何处理这个错误
         throw std::runtime_error("Buffer size limit exceeded. Closing connection.");
     }

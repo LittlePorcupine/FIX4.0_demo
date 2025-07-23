@@ -11,13 +11,14 @@ class SafeQueue {
 public:
     SafeQueue() : stop_(false) {}
 
-    void enqueue(T value) {
+    bool enqueue(T value) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stop_) {
-            return; // 或者抛异常
+            return false; // 队列已停止，返回false表示失败
         }
         queue_.push(std::move(value));
         cond_.notify_one();
+        return true; // 成功入队，返回true
     }
 
     bool pop(T& value) {

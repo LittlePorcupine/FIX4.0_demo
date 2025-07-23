@@ -55,6 +55,8 @@ configure_file(
     COPYONLY
 )
 
+
+
 # 打印出可执行文件的路径，方便用户
 message(STATUS "Server executable: ${CMAKE_BINARY_DIR}/fix_server")
 message(STATUS "Client executable: ${CMAKE_BINARY_DIR}/fix_client")

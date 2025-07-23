@@ -9,3 +9,11 @@ build/
 
 # Project specific
 进度.txt
+
+#kiro specific
+.kiro/
+
+# 测试构建产物
+tests/build/
+
+.cache/
