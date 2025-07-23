@@ -46,26 +46,26 @@
 ```mermaid
 graph TB
     subgraph "应用层 (Application Layer)"
-        FixServer["FixServer<br/>多连接服务器"]
-        Client["Client<br/>交互式客户端"]
+        FixServer["FixServer<br/>多连接服务器"]:::appLayer
+        Client["Client<br/>交互式客户端"]:::appLayer
     end
 
     subgraph "协议层 (Protocol Layer)"
-        Session["Session<br/>状态机管理"]
-        FixCodec["FixCodec<br/>消息编解码"]
-        FrameDecoder["FixFrameDecoder<br/>帧分割器"]
+        Session["Session<br/>状态机管理"]:::protocolLayer
+        FixCodec["FixCodec<br/>消息编解码"]:::protocolLayer
+        FrameDecoder["FixFrameDecoder<br/>帧分割器"]:::protocolLayer
     end
 
     subgraph "核心层 (Core Layer)"
-        Reactor["Reactor<br/>事件循环"]
-        Connection["Connection<br/>连接抽象"]
+        Reactor["Reactor<br/>事件循环"]:::coreLayer
+        Connection["Connection<br/>连接抽象"]:::coreLayer
     end
 
     subgraph "基础层 (Foundation Layer)"
-        ThreadPool["ThreadPool<br/>线程池"]
-        SafeQueue["SafeQueue<br/>安全队列"]
-        TimingWheel["TimingWheel<br/>时间轮"]
-        Config["Config<br/>配置管理"]
+        ThreadPool["ThreadPool<br/>线程池"]:::baseLayer
+        SafeQueue["SafeQueue<br/>安全队列"]:::baseLayer
+        TimingWheel["TimingWheel<br/>时间轮"]:::baseLayer
+        Config["Config<br/>配置管理"]:::baseLayer
     end
 
     %% 依赖关系
@@ -88,16 +88,11 @@ graph TB
     Reactor --> Config
     Session --> SafeQueue
 
-    %% 样式
-    classDef appLayer fill:#e1f5fe
-    classDef protocolLayer fill:#f3e5f5
-    classDef coreLayer fill:#e8f5e8
-    classDef baseLayer fill:#fff3e0
-
-    class FixServer,Client appLayer
-    class Session,FixCodec,FrameDecoder protocolLayer
-    class Reactor,Connection coreLayer
-    class ThreadPool,SafeQueue,TimingWheel,Config baseLayer
+    %% 样式定义
+    classDef appLayer fill:#e1f5fe,stroke:#4fc3f7
+    classDef protocolLayer fill:#f3e5f5,stroke:#ba68c8
+    classDef coreLayer fill:#e8f5e8,stroke:#81c784
+    classDef baseLayer fill:#fff3e0,stroke:#ffd54f
 ```
 
 ### 各层详细说明
