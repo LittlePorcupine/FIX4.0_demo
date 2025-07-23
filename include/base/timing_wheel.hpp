@@ -5,12 +5,16 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <climits>
 
 
 namespace fix40 {
 
 // 可以被 TimingWheel 安排执行的任务
 using TimerTask = std::function<void()>;
+
+// TimingWheel 安全常量
+constexpr int MAX_SAFE_DELAY_MS = INT_MAX / 1000;  // 防止整数溢出的实用上限
 
 /**
  * @class TimingWheel
@@ -37,6 +41,11 @@ public:
     void add_task(int delay_ms, TimerTask task) {
         if (delay_ms <= 0 || !task) {
             return;
+        }
+
+        // 安全检查：防止延迟值过大导致整数溢出
+        if (delay_ms > MAX_SAFE_DELAY_MS) {
+            return;  // 静默忽略过大的延迟值
         }
 
         // 计算在轮上的位置
