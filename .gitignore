@@ -16,4 +16,6 @@ build/
 # 测试构建产物
 tests/build/
 
+tests_legacy/
+
 .cache/

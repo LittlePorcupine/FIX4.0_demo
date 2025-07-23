@@ -443,8 +443,9 @@ void LogoutSentState::onMessageReceived(Session& context, const FixMessage& msg)
 
 void LogoutSentState::onTimerCheck(Session& context) {
     auto now = std::chrono::steady_clock::now();
-    if (std::chrono::duration_cast<std::chrono::seconds>(now - initiation_time_).count() >= 10) {
-        context.perform_shutdown("Logout confirmation not received within 10 seconds. Reason: " + reason_);
+    if (std::chrono::duration_cast<std::chrono::seconds>(now - initiation_time_).count() >= 
+            Config::instance().get_int("fix_session", "logout_confirm_timeout_sec", 10)) {
+        context.perform_shutdown("Logout confirmation not received within timeout. Reason: " + reason_);
     }
 }
 
