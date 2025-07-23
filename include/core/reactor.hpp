@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <cstring>
 #include <iostream>
+#include <unistd.h> // 为 read, write, close 提供 POSIX 函数声明
 
 #include "base/concurrentqueue.h" // 使用 moodycamel 的无锁队列
 
@@ -18,7 +19,6 @@
 #elif __APPLE__
 #include <sys/event.h>
 #include <sys/time.h>
-#include <unistd.h> // 为了 pipe
 #else
 #error "Unsupported platform for Reactor"
 #endif
