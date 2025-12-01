@@ -86,14 +86,16 @@ bool Client::connect(const std::string& ip, int port) {
     session_->start();
     session_->schedule_timer_tasks(timing_wheel_.get());
 
-    // 在后台线程启动 reactor
-    reactor_thread_ = std::thread([this]{ reactor_->run(); });
-
+    // 先注册 fd，再启动 reactor 线程
+    // 避免在 ET 模式下错过服务器的 Logon 响应
     reactor_->add_fd(sock, [this](int) {
         worker_pool_->enqueue([this]{
             if(connection_) connection_->handle_read();
         });
     });
+
+    // 在后台线程启动 reactor
+    reactor_thread_ = std::thread([this]{ reactor_->run(); });
 
     // Logon is now sent from within session->start()
     // auto logon = create_logon_message("CLIENT", "SERVER", 1, 30);

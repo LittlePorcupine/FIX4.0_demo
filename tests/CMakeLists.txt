@@ -43,12 +43,6 @@ if (UNIX)
     target_link_libraries(test_fix_frame_decoder PRIVATE Threads::Threads)
 endif()
 
-add_executable(test_safe_queue test_safe_queue.cpp)
-target_link_libraries(test_safe_queue PRIVATE fix_engine_test)
-if (UNIX)
-    target_link_libraries(test_safe_queue PRIVATE Threads::Threads)
-endif()
-
 add_executable(test_timing_wheel test_timing_wheel.cpp)
 target_link_libraries(test_timing_wheel PRIVATE fix_engine_test)
 if (UNIX)
@@ -64,6 +58,5 @@ configure_file(
 
 # 打印测试可执行文件路径
 message(STATUS "Test fix_frame_decoder executable: ${CMAKE_CURRENT_SOURCE_DIR}/build/test_fix_frame_decoder")
-message(STATUS "Test safe_queue executable: ${CMAKE_CURRENT_SOURCE_DIR}/build/test_safe_queue")
 message(STATUS "Test timing_wheel executable: ${CMAKE_CURRENT_SOURCE_DIR}/build/test_timing_wheel")
 message(STATUS "Test config file: ${CMAKE_CURRENT_SOURCE_DIR}/build/config.ini")
