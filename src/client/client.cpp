@@ -115,8 +115,14 @@ bool Client::connect(const std::string& ip, int port) {
 }
 
 void Client::disconnect() {
-    if (session_) {
-        session_->initiate_logout("User requested logout.");
+    // 通过 dispatch 派发到绑定的工作线程执行
+    // 避免主线程直接调用 Session 方法
+    if (connection_) {
+        connection_->dispatch([this]() {
+            if (session_) {
+                session_->initiate_logout("User requested logout.");
+            }
+        });
     }
 }
 

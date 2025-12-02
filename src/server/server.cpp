@@ -127,9 +127,12 @@ void FixServer::start() {
         }
     }
 
-    // 现在不持锁关闭会话
+    // 通过 dispatch 派发关闭任务到各连接绑定的工作线程
+    // 避免 Reactor 线程直接调用 Session 方法
     for (const auto& conn : conns_to_shutdown) {
-        conn->session()->on_shutdown("Server is shutting down");
+        conn->dispatch([conn]() {
+            conn->session()->on_shutdown("Server is shutting down");
+        });
     }
 
     // 简单地等待连接关闭，更健壮的服务器可能会设置超时
