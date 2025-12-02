@@ -111,6 +111,10 @@ Session::Session(const std::string& sender,
 }
 
 Session::~Session() {
+    // 取消定时任务，避免访问已销毁的对象
+    if (timing_wheel_ && timer_task_id_ != INVALID_TIMER_ID) {
+        timing_wheel_->cancel_task(timer_task_id_);
+    }
     std::cout << "Session (" << senderCompID << " -> " << targetCompID << ") destroyed." << std::endl;
 }
 
@@ -237,20 +241,22 @@ int Session::get_max_heart_bt_int() const { return maxHeartBtInt_; }
 void Session::schedule_timer_tasks(TimingWheel* wheel) {
     if (!wheel || !running_) return;
 
+    timing_wheel_ = wheel;
     std::weak_ptr<Session> weak_self = shared_from_this();
 
-    wheel->add_task(1000, [weak_self, wheel]() {
+    // 使用周期性任务，一次注册永久生效，直到被取消
+    timer_task_id_ = wheel->add_periodic_task(1000, [weak_self]() {
         if (auto self = weak_self.lock()) {
             if (auto conn = self->connection_.lock()) {
                 // 将定时任务派发到连接绑定的工作线程执行
-                conn->dispatch([self, wheel]() {
+                conn->dispatch([self]() {
                     if (self->is_running()) {
                         self->on_timer_check();
-                        self->schedule_timer_tasks(wheel);
                     }
                 });
             }
         }
+        // 不再需要重新调度，周期性任务会自动重复执行
     });
 }
 

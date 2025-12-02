@@ -5,110 +5,179 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
+#include <atomic>
 #include <climits>
-
 
 namespace fix40 {
 
-// 可以被 TimingWheel 安排执行的任务
 using TimerTask = std::function<void()>;
+using TimerTaskId = uint64_t;
 
-// TimingWheel 安全常量
-constexpr int MAX_SAFE_DELAY_MS = INT_MAX / 1000;  // 防止整数溢出的实用上限
+constexpr int MAX_SAFE_DELAY_MS = INT_MAX / 1000;
+constexpr TimerTaskId INVALID_TIMER_ID = 0;
 
 /**
  * @class TimingWheel
- * @brief 简单的哈希定时轮，高效管理许多定时器
+ * @brief 支持周期性任务的时间轮定时器
  *
- * 该实现在添加任务和轮转时是线程安全的
+ * 特性：
+ * - O(1) 添加任务
+ * - 支持一次性任务和周期性任务
+ * - 支持取消任务
+ * - 线程安全
  */
 class TimingWheel {
 public:
-    /**
-     * @param wheel_size 轮中的槽数（即挑数），例如 60 代表一分钟
-     * @param tick_interval_ms 每次挑的时间间隔（毫秒），例如 1000 代表 1 秒
-     */
     TimingWheel(int wheel_size, int tick_interval_ms)
         : wheel_size_(wheel_size),
           tick_interval_ms_(tick_interval_ms),
-          wheel_(wheel_size) {}
+          wheel_(wheel_size),
+          next_task_id_(1) {}
 
     /**
-     * @brief 设置任务稍后执行
-     * @param delay_ms 在执行任务前的延迟时间毫秒
-     * @param task 需要执行的任务
+     * @brief 添加一次性任务
+     * @param delay_ms 延迟时间（毫秒）
+     * @param task 任务回调
+     * @return 任务 ID，可用于取消任务
      */
-    void add_task(int delay_ms, TimerTask task) {
-        if (delay_ms <= 0 || !task) {
-            return;
-        }
-
-        // 安全检查：防止延迟值过大导致整数溢出
-        if (delay_ms > MAX_SAFE_DELAY_MS) {
-            return;  // 静默忽略过大的延迟值
-        }
-
-        // 计算在轮上的位置
-        int ticks_to_wait = (delay_ms + tick_interval_ms_ - 1) / tick_interval_ms_; // 向上取整
-
-        std::lock_guard<std::mutex> lock(mutex_);
-
-        int remaining_laps = (ticks_to_wait - 1) / wheel_size_;
-        int target_slot = (current_tick_ + ticks_to_wait) % wheel_size_;
-
-        wheel_[target_slot].push_back({remaining_laps, std::move(task)});
+    TimerTaskId add_task(int delay_ms, TimerTask task) {
+        return add_task_internal(delay_ms, std::move(task), false);
     }
 
     /**
-     * @brief 轮直接向前翻一格，处理当前槽中的任务
-     * 应该被外部定时器定期调用
+     * @brief 添加周期性任务
+     * @param interval_ms 执行间隔（毫秒）
+     * @param task 任务回调
+     * @return 任务 ID，可用于取消任务
+     */
+    TimerTaskId add_periodic_task(int interval_ms, TimerTask task) {
+        return add_task_internal(interval_ms, std::move(task), true);
+    }
+
+    /**
+     * @brief 取消任务
+     * @param id 任务 ID
+     */
+    void cancel_task(TimerTaskId id) {
+        if (id == INVALID_TIMER_ID) return;
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = task_map_.find(id);
+        if (it != task_map_.end()) {
+            it->second->cancelled = true;
+        }
+    }
+
+    /**
+     * @brief 时间轮前进一格，执行到期任务
      */
     void tick() {
-        std::list<TimerNode> tasks_to_run;
-        // int current_tick_val; // 不再需要
+        std::list<std::shared_ptr<TimerNode>> tasks_to_run;
+        std::list<std::shared_ptr<TimerNode>> tasks_to_reschedule;
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
             current_tick_ = (current_tick_ + 1) % wheel_size_;
-            // current_tick_val = current_tick_; // 不再需要
+            auto& slot = wheel_[current_tick_];
 
-            auto& slot_tasks = wheel_[current_tick_];
+            for (auto it = slot.begin(); it != slot.end(); ) {
+                auto& node = *it;
 
-            for (auto it = slot_tasks.begin(); it != slot_tasks.end(); /* 不增加 */) {
-                if (it->remaining_laps > 0) {
-                    it->remaining_laps--;
+                // 已取消的任务，从映射中移除
+                if (node->cancelled) {
+                    task_map_.erase(node->id);
+                    it = slot.erase(it);
+                    continue;
+                }
+
+                if (node->remaining_laps > 0) {
+                    node->remaining_laps--;
                     ++it;
                 } else {
-                    // 任务到期，移至临时列表，在锁外执行
-                    tasks_to_run.splice(tasks_to_run.end(), slot_tasks, it++);
+                    // 任务到期
+                    tasks_to_run.push_back(node);
+
+                    // 周期性任务需要重新调度
+                    if (node->is_periodic) {
+                        tasks_to_reschedule.push_back(node);
+                    } else {
+                        // 一次性任务，从映射中移除
+                        task_map_.erase(node->id);
+                    }
+
+                    it = slot.erase(it);
+                }
+            }
+
+            // 重新调度周期性任务
+            for (auto& node : tasks_to_reschedule) {
+                if (!node->cancelled) {
+                    int target_slot = (current_tick_ + node->interval_ticks) % wheel_size_;
+                    node->remaining_laps = (node->interval_ticks - 1) / wheel_size_;
+                    wheel_[target_slot].push_back(node);
                 }
             }
         }
 
-        /* 此处为诊断日志
-        if (!tasks_to_run.empty()) {
-            std::cout << "[TimingWheel] Tick " << current_tick_val << ", executing " << tasks_to_run.size() << " tasks." << std::endl;
-        }
-        */
-
-        // 在不拥有锁的状态下执行任务，防止死锁
-        for (const auto& node : tasks_to_run) {
-            node.task();
+        // 在锁外执行任务，避免死锁
+        for (auto& node : tasks_to_run) {
+            if (!node->cancelled && node->task) {
+                node->task();
+            }
         }
     }
 
 private:
     struct TimerNode {
+        TimerTaskId id;
         int remaining_laps;
+        int interval_ticks;  // 周期间隔（tick 数），0 表示一次性任务
+        bool is_periodic;
+        bool cancelled;
         TimerTask task;
+
+        TimerNode(TimerTaskId id_, int laps, int interval, bool periodic, TimerTask t)
+            : id(id_), remaining_laps(laps), interval_ticks(interval),
+              is_periodic(periodic), cancelled(false), task(std::move(t)) {}
     };
+
+    TimerTaskId add_task_internal(int delay_ms, TimerTask task, bool periodic) {
+        if (delay_ms <= 0 || !task) {
+            return INVALID_TIMER_ID;
+        }
+
+        if (delay_ms > MAX_SAFE_DELAY_MS) {
+            return INVALID_TIMER_ID;
+        }
+
+        int ticks_to_wait = (delay_ms + tick_interval_ms_ - 1) / tick_interval_ms_;
+
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        TimerTaskId id = next_task_id_++;
+        int remaining_laps = (ticks_to_wait - 1) / wheel_size_;
+        int target_slot = (current_tick_ + ticks_to_wait) % wheel_size_;
+
+        auto node = std::make_shared<TimerNode>(
+            id, remaining_laps, ticks_to_wait, periodic, std::move(task)
+        );
+
+        wheel_[target_slot].push_back(node);
+        task_map_[id] = node;
+
+        return id;
+    }
 
     const int wheel_size_;
     const int tick_interval_ms_;
     int current_tick_ = 0;
 
-    std::vector<std::list<TimerNode>> wheel_;
+    std::vector<std::list<std::shared_ptr<TimerNode>>> wheel_;
+    std::unordered_map<TimerTaskId, std::shared_ptr<TimerNode>> task_map_;
+    std::atomic<TimerTaskId> next_task_id_;
     std::mutex mutex_;
 };
-} // fix40 名称空间结束
+
+} // namespace fix40

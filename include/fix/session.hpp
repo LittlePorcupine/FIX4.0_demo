@@ -141,5 +141,9 @@ private:
     // std::string awaitingTestReqId; // 状态将自己管理
     std::chrono::steady_clock::time_point lastRecv;
     std::chrono::steady_clock::time_point lastSend;
+
+    // 定时任务相关
+    TimingWheel* timing_wheel_ = nullptr;
+    TimerTaskId timer_task_id_ = INVALID_TIMER_ID;
 };
 } // fix40 名称空间结束
