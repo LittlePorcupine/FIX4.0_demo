@@ -235,16 +235,20 @@ int Session::get_max_heart_bt_int() const { return maxHeartBtInt_; }
 // ... [其它辅助函数的实现]
 
 void Session::schedule_timer_tasks(TimingWheel* wheel) {
-    if (!wheel || !running_) return; // 如果会话已停止，则不重新调度
+    if (!wheel || !running_) return;
 
     std::weak_ptr<Session> weak_self = shared_from_this();
 
     wheel->add_task(1000, [weak_self, wheel]() {
         if (auto self = weak_self.lock()) {
-            if (self->is_running()) {
-                self->on_timer_check();
-                // 任务完成，重新调度下一次
-                self->schedule_timer_tasks(wheel);
+            if (auto conn = self->connection_.lock()) {
+                // 将定时任务派发到连接绑定的工作线程执行
+                conn->dispatch([self, wheel]() {
+                    if (self->is_running()) {
+                        self->on_timer_check();
+                        self->schedule_timer_tasks(wheel);
+                    }
+                });
             }
         }
     });

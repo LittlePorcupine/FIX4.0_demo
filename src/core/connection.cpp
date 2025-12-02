@@ -1,71 +1,67 @@
 #include "core/connection.hpp"
 #include "fix/session.hpp"
 #include "core/reactor.hpp"
+#include "base/thread_pool.hpp"
 #include "base/config.hpp"
 
 #include <unistd.h>
 #include <iostream>
 #include <cerrno>
-#include <string.h>
-#include <sys/socket.h> // 为了使用 send()
-#include <mutex> // 为了线程安全
+#include <cstring>
+#include <sys/socket.h>
 #include <vector>
 
 namespace fix40 {
 
-Connection::Connection(int fd, Reactor* reactor, std::shared_ptr<Session> session)
+Connection::Connection(int fd, Reactor* reactor, std::shared_ptr<Session> session,
+                       ThreadPool* thread_pool, size_t thread_index)
     : fd_(fd),
       reactor_(reactor),
       session_(std::move(session)),
+      thread_pool_(thread_pool),
+      thread_index_(thread_index),
       frame_decoder_(
           Config::instance().get_int("protocol", "max_buffer_size", 1048576),
           Config::instance().get_int("protocol", "max_body_length", 4096)
       ) {
-    std::cout << "Connection created for fd " << fd_ << std::endl;
+    std::cout << "Connection created for fd " << fd_ 
+              << ", bindded to thread " << thread_index_ << std::endl;
 }
 
 Connection::~Connection() {
     std::cout << "Connection destroyed for fd " << fd_ << std::endl;
-    // fd 关闭时对应的端已由系统关闭
-    // 但调用 shutdown 能提供更柔和的断连
-    // 将其从 reactor 中移除由其他位置处理
     close_fd();
 }
 
 void Connection::handle_read() {
-    // 防止从已关闭的连接读取
     if (is_closed_) return;
 
     std::vector<char> read_buf(Config::instance().get_int("protocol", "max_buffer_size", 4096));
     ssize_t bytes_read = 0;
 
-    // ET 模式需要一直读到缓冲空
-    // 使用 while 循环简化读取逻辑
+    // ET 模式需要一直读到 EAGAIN
     while (true) {
         bytes_read = ::read(fd_, read_buf.data(), read_buf.size());
         if (bytes_read > 0) {
             frame_decoder_.append(read_buf.data(), bytes_read);
         } else {
-            break; // 读取完成或遇到错误
+            break;
         }
     }
 
     if (bytes_read == 0) {
-        // 连接被对方关闭，这是一个正常的关闭事件
         session_->on_shutdown("Connection closed by peer.");
         return;
-    } 
-    
+    }
+
     if (bytes_read < 0) {
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            // 发生了实际错误
             session_->on_io_error("Socket read error.");
             return;
         }
     }
 
     try {
-        // 现在处理累积的缓冲
         std::string raw_msg;
         while (frame_decoder_.next_message(raw_msg)) {
             FixMessage fix_msg = session_->codec_.decode(raw_msg);
@@ -78,11 +74,7 @@ void Connection::handle_read() {
 }
 
 void Connection::handle_write() {
-    std::lock_guard<std::mutex> lock(write_mutex_);
-
     if (write_buffer_.empty()) {
-        // 可能是伪写事件，或缓冲区已被其他线程清空
-        // 此时可以安全地取消写事件注册
         reactor_->modify_fd(fd_, static_cast<uint32_t>(EventType::READ), nullptr);
         return;
     }
@@ -91,40 +83,42 @@ void Connection::handle_write() {
 
     if (sent >= 0) {
         if (static_cast<size_t>(sent) < write_buffer_.length()) {
-            // 部分发送，移除已发送的数据
             write_buffer_.erase(0, sent);
         } else {
-            // 全部数据已发送，清空缓冲并取消写事件注册
             write_buffer_.clear();
             reactor_->modify_fd(fd_, static_cast<uint32_t>(EventType::READ), nullptr);
         }
-    } else { // sent < 0
+    } else {
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
             session_->on_io_error("Socket write error.");
         }
-        // 若为 EAGAIN，则等待下一次 handle_write 调用
     }
 }
 
 void Connection::send(std::string_view data) {
     if (is_closed_) return;
 
-    std::lock_guard<std::mutex> lock(write_mutex_);
+    // 将发送操作派发到绑定的线程执行
+    std::string data_copy(data);
+    dispatch([this, data_copy = std::move(data_copy)]() {
+        do_send(data_copy);
+    });
+}
 
-    // 如果缓冲为空，尝试直接发送
+void Connection::do_send(const std::string& data) {
+    if (is_closed_) return;
+
+    // 现在在绑定的线程中，不需要锁
     if (write_buffer_.empty()) {
         ssize_t sent = ::send(fd_, data.data(), data.length(), 0);
         if (sent >= 0) {
             if (static_cast<size_t>(sent) < data.length()) {
-                // 部分发送，缓冲剩余数据
                 write_buffer_.append(data.substr(sent));
             } else {
-                // 已全部发送，无需额外处理
-                return;
+                return;  // 全部发送完成
             }
-        } else { // sent < 0
+        } else {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // 无法发送任何数据，将全部内容缓冲
                 write_buffer_.append(data);
             } else {
                 session_->on_io_error("Initial send error");
@@ -132,35 +126,45 @@ void Connection::send(std::string_view data) {
             }
         }
     } else {
-        // 缓冲区非空，仅追加新数据
         write_buffer_.append(data);
     }
 
-    // 若缓冲区有数据，需要注册写事件
+    // 有待发送数据，注册写事件
     if (!write_buffer_.empty()) {
-        reactor_->modify_fd(fd_, static_cast<uint32_t>(EventType::READ) | static_cast<uint32_t>(EventType::WRITE), [this](int){ this->handle_write(); });
+        // 注意：这里需要捕获 weak_ptr 避免循环引用
+        std::weak_ptr<Connection> weak_self = shared_from_this();
+        reactor_->modify_fd(fd_, 
+            static_cast<uint32_t>(EventType::READ) | static_cast<uint32_t>(EventType::WRITE),
+            [weak_self](int) {
+                if (auto self = weak_self.lock()) {
+                    // 写事件也派发到绑定线程
+                    self->dispatch([self]() {
+                        self->handle_write();
+                    });
+                }
+            });
+    }
+}
+
+void Connection::dispatch(std::function<void()> task) {
+    if (thread_pool_) {
+        thread_pool_->enqueue_to(thread_index_, std::move(task));
     }
 }
 
 void Connection::shutdown() {
     std::cout << "Shutting down connection for fd " << fd_ << std::endl;
-    // Session 通过此方法启动关闭
-    // 这里负责从 IO 监听中移除 fd 并关闭
     if (reactor_ && !is_closed_) {
         reactor_->remove_fd(fd_);
     }
-    // 最终清理在 close_fd() 中进行
     close_fd();
 }
 
 void Connection::close_fd() {
     if (!is_closed_.exchange(true)) {
-        // 首先表明不再发送或接收数据
-        // 这是最稳定的关闭方式
         ::shutdown(fd_, SHUT_RDWR);
-
-        // 然后关闭文件描述符
         close(fd_);
     }
 }
-} // fix40 名称空间结束
+
+} // namespace fix40

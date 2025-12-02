@@ -74,24 +74,33 @@ bool Client::connect(const std::string& ip, int port) {
         on_connection_close();
     };
 
+    // 客户端只有一个连接，绑定到线程 0
+    const size_t thread_index = 0;
+
     session_ = std::make_shared<Session>(
         config.get("client", "sender_comp_id", "CLIENT"),
         config.get("client", "target_comp_id", "SERVER"),
         config.get_int("fix_session", "default_heartbeat_interval", 30),
         close_cb
     );
-    connection_ = std::make_shared<Connection>(sock, reactor_.get(), session_);
-    session_->set_connection(connection_); // 设置反向引用
+    connection_ = std::make_shared<Connection>(
+        sock, reactor_.get(), session_,
+        worker_pool_.get(), thread_index
+    );
+    session_->set_connection(connection_);
 
     session_->start();
     session_->schedule_timer_tasks(timing_wheel_.get());
 
     // 先注册 fd，再启动 reactor 线程
-    // 避免在 ET 模式下错过服务器的 Logon 响应
-    reactor_->add_fd(sock, [this](int) {
-        worker_pool_->enqueue([this]{
-            if(connection_) connection_->handle_read();
-        });
+    // Reactor 检测到事件后派发到绑定的工作线程处理
+    std::weak_ptr<Connection> weak_conn = connection_;
+    reactor_->add_fd(sock, [weak_conn](int) {
+        if (auto conn = weak_conn.lock()) {
+            conn->dispatch([conn]() {
+                conn->handle_read();
+            });
+        }
     });
 
     // 在后台线程启动 reactor

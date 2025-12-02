@@ -147,7 +147,11 @@ void FixServer::start() {
 
 void FixServer::on_new_connection(int fd) {
     fcntl(fd, F_SETFL, O_NONBLOCK);
-    std::cout << "Accepted new connection with fd: " << fd << std::endl;
+    
+    // 计算这个连接绑定到哪个工作线程
+    size_t thread_index = static_cast<size_t>(fd) % worker_pool_->get_thread_count();
+    std::cout << "Accepted new connection with fd: " << fd 
+              << ", bindded to thread " << thread_index << std::endl;
 
     auto on_conn_close = [this, fd]() {
         worker_pool_->enqueue([this, fd] {
@@ -155,10 +159,13 @@ void FixServer::on_new_connection(int fd) {
         });
     };
 
-    // 创建 session 和 connection，然后将它们链接
+    // 创建 session 和 connection，传入线程池和绑定的线程索引
     auto session = std::make_shared<Session>("SERVER", "CLIENT", 30, on_conn_close);
-    auto connection = std::make_shared<Connection>(fd, reactor_.get(), session);
-    session->set_connection(connection); // 定位反向引用
+    auto connection = std::make_shared<Connection>(
+        fd, reactor_.get(), session,
+        worker_pool_.get(), thread_index
+    );
+    session->set_connection(connection);
 
     {
         std::lock_guard<std::mutex> lock(connections_mutex_);
@@ -168,8 +175,14 @@ void FixServer::on_new_connection(int fd) {
     session->start();
     session->schedule_timer_tasks(timing_wheel_.get());
 
-    reactor_->add_fd(fd, [connection](int) {
-        connection->handle_read();
+    // Reactor 只负责检测事件，然后派发到绑定的工作线程处理
+    std::weak_ptr<Connection> weak_conn = connection;
+    reactor_->add_fd(fd, [weak_conn](int) {
+        if (auto conn = weak_conn.lock()) {
+            conn->dispatch([conn]() {
+                conn->handle_read();
+            });
+        }
     });
 }
 
