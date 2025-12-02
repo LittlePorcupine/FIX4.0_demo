@@ -245,16 +245,20 @@ inline void Reactor::do_add_timer(int interval_ms, FdCallback cb) {
 inline void Reactor::do_remove_fd(int fd) {
 #ifdef __linux__
     if (epoll_ctl(io_fd_, EPOLL_CTL_DEL, fd, nullptr) == -1) {
-        if (errno != ENOENT) perror("epoll_ctl(DEL) failed");
+        // ENOENT: fd 不在 epoll 中
+        // EBADF: fd 已关闭（Linux 会自动从 epoll 移除已关闭的 fd）
+        if (errno != ENOENT && errno != EBADF) {
+            perror("epoll_ctl(DEL) failed");
+        }
     }
 #elif __APPLE__
     struct kevent change_event;
     EV_SET(&change_event, fd, EVFILT_READ, EV_DELETE, 0, 0, nullptr);
-    if (kevent(io_fd_, &change_event, 1, nullptr, 0, nullptr) == -1 && errno != ENOENT) {
+    if (kevent(io_fd_, &change_event, 1, nullptr, 0, nullptr) == -1 && errno != ENOENT && errno != EBADF) {
         perror("kevent(DEL READ) failed");
     }
     EV_SET(&change_event, fd, EVFILT_WRITE, EV_DELETE, 0, 0, nullptr);
-    if (kevent(io_fd_, &change_event, 1, nullptr, 0, nullptr) == -1 && errno != ENOENT) {
+    if (kevent(io_fd_, &change_event, 1, nullptr, 0, nullptr) == -1 && errno != ENOENT && errno != EBADF) {
         perror("kevent(DEL WRITE) failed");
     }
 #endif

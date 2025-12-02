@@ -159,18 +159,27 @@ void Connection::dispatch(std::function<void()> task) {
 }
 
 void Connection::shutdown() {
+    // 确保只执行一次
+    if (is_closed_.exchange(true)) {
+        return;
+    }
+
     std::cout << "Shutting down connection for fd " << fd_ << std::endl;
-    if (reactor_ && !is_closed_) {
+
+    // 先从 epoll 移除，再关闭 fd
+    // 注意：remove_fd 是同步执行的（虽然通过任务队列，但我们需要等它完成）
+    // 这里直接关闭 fd，epoll 会自动移除已关闭的 fd（Linux 特性）
+    if (reactor_) {
         reactor_->remove_fd(fd_);
     }
-    close_fd();
+
+    ::shutdown(fd_, SHUT_RDWR);
+    ::close(fd_);
 }
 
 void Connection::close_fd() {
-    if (!is_closed_.exchange(true)) {
-        ::shutdown(fd_, SHUT_RDWR);
-        close(fd_);
-    }
+    // 统一由 shutdown() 处理关闭逻辑
+    shutdown();
 }
 
 } // namespace fix40
