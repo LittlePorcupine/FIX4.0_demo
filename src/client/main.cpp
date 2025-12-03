@@ -1,5 +1,6 @@
 #include "client/client.hpp"
 #include "base/config.hpp"
+#include "base/logger.hpp"
 #include <iostream>
 #include <csignal>
 #include <filesystem>
@@ -21,7 +22,7 @@ int main(int argc, char* argv[]) {
             std::cerr << "Fatal: Failed to load config file from " << config_path << std::endl;
             return 1;
         }
-        std::cout << "Config loaded from " << std::filesystem::absolute(config_path) << std::endl;
+        LOG() << "Config loaded from " << std::filesystem::absolute(config_path).string();
 
         auto& config = fix40::Config::instance();
         std::string ip = config.get("client", "server_ip", "127.0.0.1");
@@ -34,7 +35,7 @@ int main(int argc, char* argv[]) {
             port = std::stoi(argv[2]);
         }
         
-        std::cout << "Connecting to " << ip << ":" << port << "..." << std::endl;
+        LOG() << "Connecting to " << ip << ":" << port << "...";
 
         fix40::Client client;
         if (client.connect(ip, port)) {

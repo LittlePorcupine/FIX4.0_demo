@@ -137,9 +137,9 @@ void Session::stop() {
 void Session::changeState(std::unique_ptr<IStateHandler> newState) {
     std::lock_guard<std::recursive_mutex> lock(state_mutex_);
     if (!newState) return;
-    std::cout << "Session (" << senderCompID << "): State changing from <" 
-              << (currentState_ ? currentState_->getStateName() : "null") << "> to <"
-              << newState->getStateName() << ">" << std::endl;
+    LOG() << "Session (" << senderCompID << "): State changing from <" 
+          << (currentState_ ? currentState_->getStateName() : "null") << "> to <"
+          << newState->getStateName() << ">";
     currentState_ = std::move(newState);
 }
 
@@ -200,7 +200,7 @@ void Session::send(FixMessage& msg) {
 }
 
 void Session::internal_send(const std::string& raw_msg) {
-    std::cout << ">>> SEND (" << (connection_.lock() ? std::to_string(connection_.lock()->fd()) : "N/A") << "): " << raw_msg << std::endl;
+    LOG() << ">>> SEND (" << (connection_.lock() ? std::to_string(connection_.lock()->fd()) : "N/A") << "): " << raw_msg;
 
     if (auto conn = connection_.lock()) {
         conn->send(raw_msg);
@@ -211,7 +211,7 @@ void Session::internal_send(const std::string& raw_msg) {
 void Session::perform_shutdown(const std::string& reason) {
     if (shutting_down_.exchange(true)) return;
 
-    std::cout << "Session shutting down. Reason: " << reason << std::endl;
+    LOG() << "Session shutting down. Reason: " << reason;
     stop();
 
     changeState(std::make_unique<DisconnectedState>());
@@ -297,8 +297,8 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
             const int server_max_hb = context.get_max_heart_bt_int();
 
             if (client_hb_interval >= server_min_hb && client_hb_interval <= server_max_hb) {
-                std::cout << "Client requested HeartBtInt=" << client_hb_interval 
-                          << ". Accepted. Establishing session." << std::endl;
+                LOG() << "Client requested HeartBtInt=" << client_hb_interval 
+                      << ". Accepted. Establishing session.";
                 
                 context.set_heart_bt_int(client_hb_interval); // 采用客户端的心跳值
                 
@@ -307,7 +307,7 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
                 context.changeState(std::make_unique<EstablishedState>());
             } else {
                 std::string reason = "HeartBtInt=" + std::to_string(client_hb_interval) + " is out of acceptable range [" + std::to_string(server_min_hb) + ", " + std::to_string(server_max_hb) + "].";
-                std::cout << reason << std::endl;
+                LOG() << reason;
                 auto logout_msg = create_logout_message(context.senderCompID, context.targetCompID, 1, reason);
                 context.send(logout_msg);
                 context.perform_shutdown(reason);
@@ -326,7 +326,7 @@ void DisconnectedState::onSessionStart(Session& context) {
         context.changeState(std::make_unique<LogonSentState>());
     } else {
         // 服务器端仅等待
-        std::cout << "Server session started, waiting for client Logon." << std::endl;
+        LOG() << "Server session started, waiting for client Logon.";
     }
 }
 void DisconnectedState::onLogoutRequest([[maybe_unused]] Session& context, [[maybe_unused]] const std::string& reason) {} // 无操作
@@ -335,7 +335,7 @@ void DisconnectedState::onLogoutRequest([[maybe_unused]] Session& context, [[may
 void LogonSentState::onMessageReceived(Session& context, const FixMessage& msg) {
     if (msg.get_string(tags::MsgType) == "A") {
         context.increment_recv_seq_num();
-        std::cout << "Logon confirmation received. Session established." << std::endl;
+        LOG() << "Logon confirmation received. Session established.";
         context.changeState(std::make_unique<EstablishedState>());
     } else {
         context.perform_shutdown("Received non-Logon message while waiting for Logon confirmation.");
@@ -364,7 +364,7 @@ void EstablishedState::onMessageReceived(Session& context, const FixMessage& msg
         (this->*(it->second))(context, msg);
     } else {
         // 处理业务消息或未知类型
-        std::cout << "Received business message or unknown type: " << msg_type << std::endl;
+        LOG() << "Received business message or unknown type: " << msg_type;
     }
 }
 
@@ -446,7 +446,7 @@ void LogoutSentState::onMessageReceived(Session& context, const FixMessage& msg)
         context.increment_recv_seq_num();
         context.perform_shutdown("Logout confirmation received.");
     } else {
-        std::cout << "Warning: Received non-Logout message while waiting for Logout confirmation." << std::endl;
+        LOG() << "Warning: Received non-Logout message while waiting for Logout confirmation.";
         // 根据规范忽略其他消息
     }
 }

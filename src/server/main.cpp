@@ -1,5 +1,6 @@
 #include "server/server.hpp"
 #include "base/config.hpp"
+#include "base/logger.hpp"
 #include <iostream>
 #include <csignal>
 #include <filesystem>
@@ -25,7 +26,7 @@ int main(int argc, char* argv[]) {
             std::cerr << "Fatal: Failed to load config file from " << config_path << std::endl;
             return 1;
         }
-        std::cout << "Config loaded from " << std::filesystem::absolute(config_path) << std::endl;
+        LOG() << "Config loaded from " << std::filesystem::absolute(config_path).string();
 
 
         int port = fix40::Config::instance().get_int("server", "port", 9000);
