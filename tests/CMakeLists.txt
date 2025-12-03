@@ -1,62 +1,52 @@
-# 测试专用的CMakeLists.txt
+# 测试 CMakeLists.txt
 cmake_minimum_required(VERSION 3.10)
 
-# 项目名称
 project(FixDemo_Tests CXX)
 
-# 设置 C++ 标准为 17
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# 添加推荐的编译器警告选项
-add_compile_options(-Wall -Wextra -pedantic)
+# 添加父目录的 include 路径
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
-# 设置测试可执行文件的输出目录为当前tests/build目录
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/build)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_CURRENT_SOURCE_DIR}/build)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_CURRENT_SOURCE_DIR}/build)
-
-# 添加父目录的include路径
-include_directories(../include)
-
-# 创建fix_engine静态库（测试版本）
+# 创建测试库（复用主项目的源文件）
 add_library(fix_engine_test STATIC
     ../src/fix/session.cpp
     ../src/core/connection.cpp
     ../src/fix/fix_frame_decoder.cpp
     ../src/base/config.cpp
 )
-
-# 为测试库指定头文件搜索路径
 target_include_directories(fix_engine_test PUBLIC ../include)
 
-# 在类 Unix 系统上链接 pthread
+# 链接 pthread
 if (UNIX)
     find_package(Threads REQUIRED)
 endif()
 
-# 添加测试可执行文件
-add_executable(test_fix_frame_decoder test_fix_frame_decoder.cpp)
-target_link_libraries(test_fix_frame_decoder PRIVATE fix_engine_test)
+# 创建测试可执行文件
+add_executable(unit_tests
+    main.cpp
+    unit/test_fix_codec.cpp
+    unit/test_frame_decoder.cpp
+    unit/test_timing_wheel.cpp
+)
+
+target_link_libraries(unit_tests PRIVATE fix_engine_test)
 if (UNIX)
-    target_link_libraries(test_fix_frame_decoder PRIVATE Threads::Threads)
+    target_link_libraries(unit_tests PRIVATE Threads::Threads)
 endif()
 
-add_executable(test_timing_wheel test_timing_wheel.cpp)
-target_link_libraries(test_timing_wheel PRIVATE fix_engine_test)
-if (UNIX)
-    target_link_libraries(test_timing_wheel PRIVATE Threads::Threads)
-endif()
-
-# 将config.ini文件复制到测试构建目录
+# 复制 config.ini 到测试目录
 configure_file(
-    "${CMAKE_SOURCE_DIR}/../config.ini"
-    "${CMAKE_CURRENT_SOURCE_DIR}/build/config.ini"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../config.ini"
+    "${CMAKE_CURRENT_BINARY_DIR}/config.ini"
     COPYONLY
 )
 
-# 打印测试可执行文件路径
-message(STATUS "Test fix_frame_decoder executable: ${CMAKE_CURRENT_SOURCE_DIR}/build/test_fix_frame_decoder")
-message(STATUS "Test timing_wheel executable: ${CMAKE_CURRENT_SOURCE_DIR}/build/test_timing_wheel")
-message(STATUS "Test config file: ${CMAKE_CURRENT_SOURCE_DIR}/build/config.ini")
+# 添加 CTest 支持
+enable_testing()
+add_test(NAME unit_tests COMMAND unit_tests)
+
+message(STATUS "Test executable: ${CMAKE_CURRENT_BINARY_DIR}/unit_tests")
