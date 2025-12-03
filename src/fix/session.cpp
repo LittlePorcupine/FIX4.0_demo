@@ -1,6 +1,5 @@
 #include "fix/session.hpp"
 
-#include <iostream>
 #include <iomanip>
 #include <utility>
 #include <stdexcept>
@@ -10,6 +9,7 @@
 #include "fix/fix_messages.hpp"
 #include "base/timing_wheel.hpp"
 #include "base/config.hpp"
+#include "base/logger.hpp"
 
 
 namespace fix40 {
@@ -115,7 +115,7 @@ Session::~Session() {
     if (timing_wheel_ && timer_task_id_ != INVALID_TIMER_ID) {
         timing_wheel_->cancel_task(timer_task_id_);
     }
-    std::cout << "Session (" << senderCompID << " -> " << targetCompID << ") destroyed." << std::endl;
+    LOG() << "Session (" << senderCompID << " -> " << targetCompID << ") destroyed.";
 }
 
 void Session::set_connection(std::weak_ptr<Connection> conn) {

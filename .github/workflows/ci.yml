@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Build main project
+      run: |
+        cmake -B build .
+        cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+    
+    - name: Build tests
+      run: |
+        cmake -B tests/build -S tests
+        cmake --build tests/build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+    
+    - name: Run unit tests
+      run: ./tests/build/unit_tests
+    
+    - name: Run E2E tests - Session Flow
+      run: ./tests/e2e/test_session_flow.sh
+    
+    - name: Run E2E tests - Multi Client
+      run: ./tests/e2e/test_multi_client.sh

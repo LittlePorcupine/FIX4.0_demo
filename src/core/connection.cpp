@@ -3,9 +3,9 @@
 #include "core/reactor.hpp"
 #include "base/thread_pool.hpp"
 #include "base/config.hpp"
+#include "base/logger.hpp"
 
 #include <unistd.h>
-#include <iostream>
 #include <cerrno>
 #include <cstring>
 #include <sys/socket.h>
@@ -24,12 +24,11 @@ Connection::Connection(int fd, Reactor* reactor, std::shared_ptr<Session> sessio
           Config::instance().get_int("protocol", "max_buffer_size", 1048576),
           Config::instance().get_int("protocol", "max_body_length", 4096)
       ) {
-    std::cout << "Connection created for fd " << fd_ 
-              << ", bindded to thread " << thread_index_ << std::endl;
+    LOG() << "Connection created for fd " << fd_ << ", bindded to thread " << thread_index_;
 }
 
 Connection::~Connection() {
-    std::cout << "Connection destroyed for fd " << fd_ << std::endl;
+    LOG() << "Connection destroyed for fd " << fd_;
     close_fd();
 }
 
@@ -76,7 +75,7 @@ void Connection::handle_read() {
         std::string raw_msg;
         while (frame_decoder_.next_message(raw_msg)) {
             FixMessage fix_msg = session_->codec_.decode(raw_msg);
-            std::cout << "<<< RECV (" << fd_ << "): " << raw_msg << std::endl;
+            LOG() << "<<< RECV (" << fd_ << "): " << raw_msg;
             session_->on_message_received(fix_msg);
         }
     } catch (const std::exception& e) {
@@ -175,7 +174,7 @@ void Connection::shutdown() {
         return;
     }
 
-    std::cout << "Shutting down connection for fd " << fd_ << std::endl;
+    LOG() << "Shutting down connection for fd " << fd_;
 
     // 先从 epoll 移除，再关闭 fd
     // 注意：remove_fd 是同步执行的（虽然通过任务队列，但我们需要等它完成）
