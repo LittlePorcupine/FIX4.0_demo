@@ -8,6 +8,10 @@ namespace fix40 {
 class FixFrameDecoder {
 public:
     explicit FixFrameDecoder(size_t max_buffer_size, size_t max_body_length);
+
+    // 检查是否可以追加指定长度的数据（不会溢出）
+    bool can_append(size_t len) const;
+
     // 向内部缓冲区追加新的数据
     void append(const char* data, size_t len);
 
