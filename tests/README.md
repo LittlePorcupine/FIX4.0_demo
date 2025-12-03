@@ -1,56 +1,39 @@
-# 测试说明
+# 测试
 
-本目录包含项目的所有单元测试，测试与主项目分离管理。
+## 单元测试
 
-## 目录结构
+使用 [Catch2](https://github.com/catchorg/Catch2) v2 测试框架。
 
-```
-tests/
-├── CMakeLists.txt          # 测试专用的CMake配置
-├── build.sh               # 测试构建脚本
-├── run_tests.sh           # 测试运行脚本
-├── test_fix_frame_decoder.cpp  # FIX帧解码器测试
-├── test_safe_queue.cpp    # 安全队列测试
-├── build/                 # 测试构建输出目录（不提交到git）
-└── README.md              # 本文件
-```
+### 构建
 
-## 快速开始
-
-### 构建测试
 ```bash
-cd tests
-./build.sh
+cmake -B tests/build -S tests
+cmake --build tests/build
 ```
 
-### 运行所有测试
+### 运行
+
 ```bash
-cd tests
-./run_tests.sh
+./tests/build/unit_tests
 ```
 
-### 清理构建
+### 测试内容
+
+| 文件 | 测试对象 |
+|------|---------|
+| `unit/test_fix_codec.cpp` | FIX 消息编解码 |
+| `unit/test_frame_decoder.cpp` | FIX 帧解析器 |
+| `unit/test_timing_wheel.cpp` | 时间轮定时器 |
+
+### 运行特定测试
+
 ```bash
-cd tests
-./build.sh clean
+# 只运行 codec 相关测试
+./tests/build/unit_tests [codec]
+
+# 只运行 timing_wheel 相关测试
+./tests/build/unit_tests [timing_wheel]
+
+# 列出所有测试
+./tests/build/unit_tests --list-tests
 ```
-
-### 手动运行单个测试
-```bash
-cd tests/build
-./test_fix_frame_decoder
-./test_safe_queue
-```
-
-## 注意事项
-
-1. 测试构建产物位于 `tests/build/` 目录下，该目录不会被git跟踪
-2. 测试使用独立的CMake配置，不会影响主项目的构建
-3. 测试会自动链接主项目的fix_engine库
-4. config.ini文件会自动复制到测试构建目录
-
-## 添加新测试
-
-1. 在tests目录下创建新的测试源文件
-2. 在tests/CMakeLists.txt中添加相应的可执行文件配置
-3. 在run_tests.sh中添加新测试的运行命令
