@@ -8,6 +8,12 @@ namespace fix40 {
 FixFrameDecoder::FixFrameDecoder(size_t max_buffer_size, size_t max_body_length)
     : max_buffer_size_(max_buffer_size), max_body_length_(max_body_length) {}
 
+bool FixFrameDecoder::can_append(size_t len) const {
+    if (buffer_.size() >= max_buffer_size_) return false;
+    if (len > max_buffer_size_ - buffer_.size()) return false;
+    return true;
+}
+
 void FixFrameDecoder::append(const char* data, size_t len) {
     // Safe overflow prevention: use subtraction instead of addition
     // This prevents integer overflow when buffer_.size() + len would exceed SIZE_MAX

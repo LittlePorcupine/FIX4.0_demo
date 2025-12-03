@@ -38,15 +38,26 @@ void Connection::handle_read() {
 
     std::vector<char> read_buf(Config::instance().get_int("protocol", "max_buffer_size", 4096));
     ssize_t bytes_read = 0;
+    bool buffer_overflow = false;
 
     // ET 模式需要一直读到 EAGAIN
     while (true) {
         bytes_read = ::read(fd_, read_buf.data(), read_buf.size());
         if (bytes_read > 0) {
+            // 在 append 前检查是否会溢出，避免抛异常
+            if (!frame_decoder_.can_append(bytes_read)) {
+                buffer_overflow = true;
+                break;
+            }
             frame_decoder_.append(read_buf.data(), bytes_read);
         } else {
             break;
         }
+    }
+
+    if (buffer_overflow) {
+        session_->on_io_error("Buffer overflow: client sending too much data.");
+        return;
     }
 
     if (bytes_read == 0) {
