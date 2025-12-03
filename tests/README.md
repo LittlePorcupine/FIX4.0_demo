@@ -37,3 +37,43 @@ cmake --build tests/build
 # 列出所有测试
 ./tests/build/unit_tests --list-tests
 ```
+
+## 端到端测试
+
+验证完整的客户端-服务端会话流程。
+
+### 运行
+
+```bash
+# 需要先构建主项目
+cmake -B build .
+cmake --build build
+
+# 运行端到端测试
+./tests/e2e/test_session_flow.sh    # 单客户端会话流程
+./tests/e2e/test_multi_client.sh    # 多客户端并发
+```
+
+### 测试内容
+
+**test_session_flow.sh**
+- 服务端启动和监听
+- 客户端连接和 Logon 握手
+- 会话建立确认
+- 心跳消息发送和接收
+- 连接断开和资源清理
+
+**test_multi_client.sh**
+- 5 个客户端同时连接
+- 所有会话并发建立
+- 连接分布到多个工作线程
+- 所有客户端心跳交换
+- 所有会话正确清理
+
+测试使用 `config_test.ini` 配置文件，心跳间隔设为 3 秒以加速测试。
+
+## CI
+
+项目使用 GitHub Actions 进行持续集成，在 Ubuntu 和 macOS 上运行所有测试。
+
+配置文件：`.github/workflows/ci.yml`

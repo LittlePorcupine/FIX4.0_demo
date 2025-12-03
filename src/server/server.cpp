@@ -1,5 +1,6 @@
 #include "server/server.hpp"
 #include "base/config.hpp"
+#include "base/logger.hpp"
 #include <iostream>
 #include <csignal>
 
@@ -20,7 +21,7 @@ namespace fix40 {
 FixServer* FixServer::instance_for_signal_ = nullptr;
 
 void FixServer::signal_handler(int signum) {
-    std::cout << "\nCaught signal " << signum << ". Shutting down gracefully..." << std::endl;
+    LOG() << "\nCaught signal " << signum << ". Shutting down gracefully...";
     if (instance_for_signal_ && instance_for_signal_->reactor_) {
         instance_for_signal_->reactor_->stop();
     }
@@ -73,8 +74,8 @@ FixServer::FixServer(int port, int num_threads)
         throw std::runtime_error("Listen failed");
     }
 
-    std::cout << "Server listening on port " << port_ << std::endl;
-    std::cout << "Worker thread pool size: " << worker_pool_->get_thread_count() << std::endl;
+    LOG() << "Server listening on port " << port_;
+    LOG() << "Worker thread pool size: " << worker_pool_->get_thread_count();
 }
 
 FixServer::~FixServer() {
@@ -84,7 +85,7 @@ FixServer::~FixServer() {
     }
     close(listen_fd_);
     instance_for_signal_ = nullptr;
-    std::cout << "FixServer destroyed." << std::endl;
+    LOG() << "FixServer destroyed.";
 }
 
 void FixServer::start() {
@@ -115,7 +116,7 @@ void FixServer::start() {
     reactor_->run(); // 此调用会阻塞直到调用 stop()
 
     // --- 优雅关闭逻辑 ---
-    std::cout << "Reactor stopped. Closing listener and shutting down sessions..." << std::endl;
+    LOG() << "Reactor stopped. Closing listener and shutting down sessions...";
     reactor_->remove_fd(listen_fd_);
 
     // 安全地获取将要关闭的连接
@@ -144,8 +145,8 @@ void FixServer::start() {
         }
     }
 
-    std::cout << "All sessions closed." << std::endl;
-    std::cout << "Server shut down gracefully." << std::endl;
+    LOG() << "All sessions closed.";
+    LOG() << "Server shut down gracefully.";
 }
 
 void FixServer::on_new_connection(int fd) {
@@ -153,8 +154,8 @@ void FixServer::on_new_connection(int fd) {
     
     // 计算这个连接绑定到哪个工作线程
     size_t thread_index = static_cast<size_t>(fd) % worker_pool_->get_thread_count();
-    std::cout << "Accepted new connection with fd: " << fd 
-              << ", bindded to thread " << thread_index << std::endl;
+    LOG() << "Accepted new connection with fd: " << fd 
+          << ", bindded to thread " << thread_index;
 
     auto on_conn_close = [this, fd]() {
         worker_pool_->enqueue([this, fd] {
@@ -195,7 +196,7 @@ void FixServer::on_connection_close(int fd) {
     if (it != connections_.end()) {
         it->second->shutdown();
         connections_.erase(it);
-        std::cout << "Cleaned up resources for fd: " << fd << std::endl;
+        LOG() << "Cleaned up resources for fd: " << fd;
     }
 }
 } // fix40 名称空间结束

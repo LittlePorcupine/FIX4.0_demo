@@ -3,6 +3,7 @@
 #include "base/thread_pool.hpp"
 #include "base/timing_wheel.hpp"
 #include "base/config.hpp"
+#include "base/logger.hpp"
 #include "core/connection.hpp"
 #include "fix/session.hpp"
 #include "fix/fix_messages.hpp"
@@ -32,7 +33,7 @@ Client::~Client() {
     if (reactor_thread_.joinable()) {
         reactor_thread_.join();
     }
-    std::cout << "Client destroyed." << std::endl;
+    LOG() << "Client destroyed.";
 }
 
 bool Client::connect(const std::string& ip, int port) {
@@ -57,7 +58,7 @@ bool Client::connect(const std::string& ip, int port) {
     }
 
     fcntl(sock, F_SETFL, O_NONBLOCK);
-    std::cout << "Connected to server." << std::endl;
+    LOG() << "Connected to server.";
 
     auto& config = Config::instance();
 
@@ -127,11 +128,11 @@ void Client::disconnect() {
 }
 
 void Client::run_console() {
-    std::cout << "Type 'logout' to disconnect." << std::endl;
+    LOG() << "Type 'logout' to disconnect.";
     std::string line;
     while (session_ && session_->is_running() && std::getline(std::cin, line)) {
         if (line == "logout") {
-            std::cout << "Logout command issued. Sending logout message..." << std::endl;
+            LOG() << "Logout command issued. Sending logout message...";
             disconnect();
             break; // 退出输入循环
         }
