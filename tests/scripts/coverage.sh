@@ -50,8 +50,8 @@ cd "$BUILD_DIR"
 # 生成覆盖率报告
 echo -e "${YELLOW}Generating coverage report...${NC}"
 
-# 收集覆盖率数据
-lcov --directory . --capture --output-file coverage.info --ignore-errors inconsistent
+# 收集覆盖率数据（忽略多线程导致的 negative count 和 gcov 警告）
+lcov --directory . --capture --output-file coverage.info --ignore-errors inconsistent,gcov,negative
 
 # 过滤掉系统头文件、测试文件和第三方库
 lcov --remove coverage.info \
