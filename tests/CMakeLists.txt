@@ -31,6 +31,9 @@ add_executable(unit_tests
     unit/test_fix_codec.cpp
     unit/test_frame_decoder.cpp
     unit/test_timing_wheel.cpp
+    unit/test_config.cpp
+    unit/test_thread_pool.cpp
+    unit/test_session.cpp
 )
 
 target_link_libraries(unit_tests PRIVATE fix_engine_test)
