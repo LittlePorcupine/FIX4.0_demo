@@ -5,6 +5,7 @@
 #include <thread>
 #include <vector>
 #include <set>
+#include <condition_variable>
 
 using namespace fix40;
 
@@ -44,30 +45,42 @@ TEST_CASE("ThreadPool multiple tasks", "[thread_pool]") {
 TEST_CASE("ThreadPool enqueue_to specific thread", "[thread_pool]") {
     ThreadPool pool(4);
     std::atomic<int> counter{0};
+    std::atomic<int> completed{0};
+    const int num_tasks = 10;
     
     // 向特定线程提交任务
-    for (int i = 0; i < 10; ++i) {
-        pool.enqueue_to(0, [&counter]() {
+    for (int i = 0; i < num_tasks; ++i) {
+        pool.enqueue_to(0, [&counter, &completed]() {
             counter++;
+            completed++;
         });
     }
     
-    // 等待任务完成
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // 等待所有任务完成（使用轮询而不是固定 sleep）
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (completed < num_tasks && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     
-    REQUIRE(counter == 10);
+    REQUIRE(counter == num_tasks);
 }
 
 TEST_CASE("ThreadPool enqueue_to with index overflow", "[thread_pool]") {
     ThreadPool pool(4);
     std::atomic<int> counter{0};
+    std::atomic<bool> done{false};
     
     // 线程索引超出范围，应该取模
-    pool.enqueue_to(100, [&counter]() {
+    pool.enqueue_to(100, [&counter, &done]() {
         counter++;
+        done = true;
     });
     
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // 等待任务完成
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!done && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     
     REQUIRE(counter == 1);
 }
@@ -76,18 +89,26 @@ TEST_CASE("ThreadPool tasks on same thread execute serially", "[thread_pool]") {
     ThreadPool pool(4);
     std::vector<int> execution_order;
     std::mutex order_mutex;
+    std::atomic<int> completed{0};
+    const int num_tasks = 5;
     
     // 向同一个线程提交多个任务
-    for (int i = 0; i < 5; ++i) {
-        pool.enqueue_to(0, [i, &execution_order, &order_mutex]() {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            std::lock_guard<std::mutex> lock(order_mutex);
-            execution_order.push_back(i);
+    for (int i = 0; i < num_tasks; ++i) {
+        pool.enqueue_to(0, [i, &execution_order, &order_mutex, &completed]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            {
+                std::lock_guard<std::mutex> lock(order_mutex);
+                execution_order.push_back(i);
+            }
+            completed++;
         });
     }
     
-    // 等待所有任务完成
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // 等待所有任务完成（使用轮询而不是固定 sleep）
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (completed < num_tasks && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     
     // 同一线程的任务应该按顺序执行
     REQUIRE(execution_order.size() == 5);
@@ -112,14 +133,19 @@ TEST_CASE("ThreadPool concurrent access safety", "[thread_pool]") {
     std::atomic<int> counter{0};
     const int num_tasks = 1000;
     
+    std::vector<std::future<void>> futures;
+    std::mutex futures_mutex;
+    
     // 从多个线程同时提交任务
     std::vector<std::thread> submitters;
     for (int t = 0; t < 4; ++t) {
-        submitters.emplace_back([&pool, &counter, num_tasks]() {
+        submitters.emplace_back([&pool, &counter, &futures, &futures_mutex, num_tasks]() {
             for (int i = 0; i < num_tasks / 4; ++i) {
-                pool.enqueue([&counter]() {
+                auto f = pool.enqueue([&counter]() {
                     counter++;
                 });
+                std::lock_guard<std::mutex> lock(futures_mutex);
+                futures.push_back(std::move(f));
             }
         });
     }
@@ -129,7 +155,9 @@ TEST_CASE("ThreadPool concurrent access safety", "[thread_pool]") {
     }
     
     // 等待所有任务完成
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    for (auto& f : futures) {
+        f.get();
+    }
     
     REQUIRE(counter == num_tasks);
 }
@@ -165,7 +193,7 @@ TEST_CASE("ThreadPool graceful shutdown", "[thread_pool]") {
         // 提交一些任务
         for (int i = 0; i < 10; ++i) {
             pool.enqueue_to(0, [&counter]() {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 counter++;
             });
         }

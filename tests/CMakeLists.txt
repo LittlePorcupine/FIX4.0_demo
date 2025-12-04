@@ -7,6 +7,16 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# 代码覆盖率选项
+option(ENABLE_COVERAGE "Enable code coverage" OFF)
+
+if(ENABLE_COVERAGE)
+    message(STATUS "Code coverage enabled")
+    # 添加 -fprofile-update=atomic 解决多线程测试的覆盖率计数器竞争问题
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage -fprofile-arcs -ftest-coverage -fprofile-update=atomic")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
+endif()
+
 # 添加父目录的 include 路径
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
@@ -53,3 +63,25 @@ enable_testing()
 add_test(NAME unit_tests COMMAND unit_tests)
 
 message(STATUS "Test executable: ${CMAKE_CURRENT_BINARY_DIR}/unit_tests")
+
+# 覆盖率报告生成 target
+if(ENABLE_COVERAGE)
+    find_program(LCOV lcov)
+    find_program(GENHTML genhtml)
+    
+    if(LCOV AND GENHTML)
+        add_custom_target(coverage
+            COMMAND ${LCOV} --directory . --zerocounters
+            COMMAND $<TARGET_FILE:unit_tests>
+            COMMAND ${LCOV} --directory . --capture --output-file coverage.info
+            COMMAND ${LCOV} --remove coverage.info '/usr/*' '*/catch2/*' '*/tests/*' --output-file coverage.info
+            COMMAND ${GENHTML} coverage.info --output-directory coverage_report
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+            DEPENDS unit_tests
+            COMMENT "Generating code coverage report..."
+        )
+        message(STATUS "Coverage target available: make coverage")
+    else()
+        message(WARNING "lcov/genhtml not found, coverage target disabled")
+    endif()
+endif()

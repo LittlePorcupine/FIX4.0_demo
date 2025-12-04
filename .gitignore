@@ -18,4 +18,6 @@ tests/build/
 
 tests_legacy/
 
+build-coverage/
+
 .cache/
