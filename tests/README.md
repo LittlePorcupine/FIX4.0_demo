@@ -24,6 +24,9 @@ cmake --build tests/build
 | `unit/test_fix_codec.cpp` | FIX 消息编解码 |
 | `unit/test_frame_decoder.cpp` | FIX 帧解析器 |
 | `unit/test_timing_wheel.cpp` | 时间轮定时器 |
+| `unit/test_config.cpp` | 配置文件解析 |
+| `unit/test_thread_pool.cpp` | 线程池 |
+| `unit/test_session.cpp` | Session 状态机和消息处理 |
 
 ### 运行特定测试
 
@@ -33,6 +36,18 @@ cmake --build tests/build
 
 # 只运行 timing_wheel 相关测试
 ./tests/build/unit_tests [timing_wheel]
+
+# 只运行 config 相关测试
+./tests/build/unit_tests [config]
+
+# 只运行 thread_pool 相关测试
+./tests/build/unit_tests [thread_pool]
+
+# 只运行 session 相关测试
+./tests/build/unit_tests [session]
+
+# 只运行边界测试
+./tests/build/unit_tests [edge]
 
 # 列出所有测试
 ./tests/build/unit_tests --list-tests

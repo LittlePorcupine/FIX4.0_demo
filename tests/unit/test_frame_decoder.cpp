@@ -91,3 +91,103 @@ TEST_CASE("FixFrameDecoder discard garbage before message", "[decoder]") {
     REQUIRE(decoder.next_message(result));
     REQUIRE(result == msg);
 }
+
+
+TEST_CASE("FixFrameDecoder invalid body length - negative", "[decoder][edge]") {
+    FixFrameDecoder decoder(1024, 512);
+    
+    // 负数 BodyLength
+    std::string bad_msg = "8=FIX.4.0\x01" "9=-5\x01" "35=0\x01" "10=000\x01";
+    decoder.append(bad_msg.c_str(), bad_msg.size());
+    
+    std::string result;
+    REQUIRE_THROWS(decoder.next_message(result));
+}
+
+TEST_CASE("FixFrameDecoder invalid body length - too large", "[decoder][edge]") {
+    FixFrameDecoder decoder(1024, 50);  // max_body_length = 50
+    
+    // BodyLength 超过限制
+    std::string bad_msg = "8=FIX.4.0\x01" "9=100\x01" "35=0\x01" "10=000\x01";
+    decoder.append(bad_msg.c_str(), bad_msg.size());
+    
+    std::string result;
+    REQUIRE_THROWS(decoder.next_message(result));
+}
+
+TEST_CASE("FixFrameDecoder invalid body length - non-numeric", "[decoder][edge]") {
+    FixFrameDecoder decoder(1024, 512);
+    
+    // 非数字 BodyLength
+    std::string bad_msg = "8=FIX.4.0\x01" "9=abc\x01" "35=0\x01" "10=000\x01";
+    decoder.append(bad_msg.c_str(), bad_msg.size());
+    
+    std::string result;
+    REQUIRE_THROWS(decoder.next_message(result));
+}
+
+TEST_CASE("FixFrameDecoder empty buffer", "[decoder]") {
+    FixFrameDecoder decoder(1024, 512);
+    
+    std::string result;
+    REQUIRE_FALSE(decoder.next_message(result));
+}
+
+TEST_CASE("FixFrameDecoder partial BeginString", "[decoder]") {
+    FixFrameDecoder decoder(1024, 512);
+    
+    // 只有部分 BeginString
+    std::string partial = "8=FIX";
+    decoder.append(partial.c_str(), partial.size());
+    
+    std::string result;
+    REQUIRE_FALSE(decoder.next_message(result));
+}
+
+TEST_CASE("FixFrameDecoder waiting for more data", "[decoder]") {
+    FixFrameDecoder decoder(1024, 512);
+    
+    // 有 BeginString 和 BodyLength，但消息体不完整
+    std::string partial = "8=FIX.4.0\x01" "9=100\x01" "35=0\x01";
+    decoder.append(partial.c_str(), partial.size());
+    
+    std::string result;
+    REQUIRE_FALSE(decoder.next_message(result));
+}
+
+TEST_CASE("FixFrameDecoder incremental append", "[decoder]") {
+    FixFrameDecoder decoder(1024, 512);
+    
+    std::string msg = "8=FIX.4.0\x01" "9=5\x01" "35=0\x01" "10=196\x01";
+    
+    // 逐字节追加
+    for (char c : msg) {
+        decoder.append(&c, 1);
+    }
+    
+    std::string result;
+    REQUIRE(decoder.next_message(result));
+    REQUIRE(result == msg);
+}
+
+TEST_CASE("FixFrameDecoder can_append at boundary", "[decoder]") {
+    FixFrameDecoder decoder(100, 50);
+    
+    // 刚好填满
+    std::string data(100, 'x');
+    REQUIRE(decoder.can_append(100));
+    decoder.append(data.c_str(), data.size());
+    
+    // 已满，不能再追加
+    REQUIRE_FALSE(decoder.can_append(1));
+}
+
+TEST_CASE("FixFrameDecoder handles zero length append", "[decoder]") {
+    FixFrameDecoder decoder(1024, 512);
+    
+    // 追加空数据不应该出错
+    REQUIRE_NOTHROW(decoder.append("", 0));
+    
+    std::string result;
+    REQUIRE_FALSE(decoder.next_message(result));
+}
