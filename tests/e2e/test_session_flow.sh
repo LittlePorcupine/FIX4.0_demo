@@ -30,6 +30,8 @@ cleanup() {
         wait "$SERVER_PID" 2>/dev/null || true
     fi
     rm -f "$SERVER_LOG" "$CLIENT_LOG"
+    # 恢复原始配置文件
+    cp "$PROJECT_ROOT/config.ini" "$BUILD_DIR/config.ini" 2>/dev/null || true
 }
 
 trap cleanup EXIT

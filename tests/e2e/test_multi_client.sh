@@ -38,6 +38,8 @@ cleanup() {
     for log in "${CLIENT_LOGS[@]}"; do
         rm -f "$log"
     done
+    # 恢复原始配置文件
+    cp "$PROJECT_ROOT/config.ini" "$BUILD_DIR/config.ini" 2>/dev/null || true
 }
 
 trap cleanup EXIT
