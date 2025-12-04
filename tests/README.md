@@ -87,8 +87,39 @@ cmake --build build
 
 测试使用 `config_test.ini` 配置文件，心跳间隔设为 3 秒以加速测试。
 
+## 代码覆盖率
+
+### 本地生成覆盖率报告
+
+需要先安装 lcov：
+```bash
+# macOS
+brew install lcov
+
+# Ubuntu
+sudo apt-get install lcov
+```
+
+运行覆盖率脚本：
+```bash
+./tests/scripts/coverage.sh
+```
+
+报告会生成在 `tests/build-coverage/coverage_report/index.html`。
+
+### 手动构建（带覆盖率）
+
+```bash
+cmake -B tests/build -S tests -DENABLE_COVERAGE=ON
+cmake --build tests/build
+./tests/build/unit_tests
+cd tests/build && make coverage
+```
+
 ## CI
 
 项目使用 GitHub Actions 进行持续集成，在 Ubuntu 和 macOS 上运行所有测试。
+
+CI 会自动生成代码覆盖率报告并上传到 Codecov。覆盖率报告也会作为 artifact 保存，可在 Actions 页面下载。
 
 配置文件：`.github/workflows/ci.yml`
