@@ -157,8 +157,10 @@ void FixServer::on_new_connection(int fd) {
     LOG() << "Accepted new connection with fd: " << fd 
           << ", bindded to thread " << thread_index;
 
-    auto on_conn_close = [this, fd]() {
-        worker_pool_->enqueue([this, fd] {
+    auto on_conn_close = [this, fd, thread_index]() {
+        // 使用 enqueue_to 确保关闭操作在连接绑定的线程中执行，
+        // 避免与该连接的其他操作（handle_read/handle_write）产生竞态
+        worker_pool_->enqueue_to(thread_index, [this, fd] {
             this->on_connection_close(fd);
         });
     };
