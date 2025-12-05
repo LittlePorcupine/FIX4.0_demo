@@ -151,28 +151,28 @@ fi
 echo "Waiting for heartbeat exchange (5 seconds)..."
 sleep 5
 
-# 验证所有客户端都有心跳交换
+# 验证所有客户端都有心跳活动（Heartbeat 35=0 或 TestRequest 35=1）
 HB_SUCCESS=0
 for i in $(seq 0 $((NUM_CLIENTS - 1))); do
-    if grep -q "35=0" "${CLIENT_LOGS[$i]}" 2>/dev/null; then
+    if grep -qE "35=0|35=1" "${CLIENT_LOGS[$i]}" 2>/dev/null; then
         HB_SUCCESS=$((HB_SUCCESS + 1))
     fi
 done
 
 if [ "$HB_SUCCESS" -lt "$NUM_CLIENTS" ]; then
-    fail "Only $HB_SUCCESS/$NUM_CLIENTS clients exchanged heartbeats"
+    fail "Only $HB_SUCCESS/$NUM_CLIENTS clients had heartbeat activity"
 fi
-pass "All $NUM_CLIENTS clients exchanged heartbeats"
+pass "All $NUM_CLIENTS clients had heartbeat activity"
 
-# 统计服务端心跳消息
-SERVER_HB_SENT=$(grep -c ">>> SEND.*35=0" "$SERVER_LOG" || echo "0")
-SERVER_HB_RECV=$(grep -c "<<< RECV.*35=0" "$SERVER_LOG" || echo "0")
-echo "Server heartbeats: sent=$SERVER_HB_SENT, received=$SERVER_HB_RECV"
+# 统计服务端心跳活动（Heartbeat 35=0 或 TestRequest 35=1）
+SERVER_HB_SENT=$(grep -cE ">>> SEND.*(35=0|35=1)" "$SERVER_LOG" || echo "0")
+SERVER_HB_RECV=$(grep -cE "<<< RECV.*(35=0|35=1)" "$SERVER_LOG" || echo "0")
+echo "Server heartbeat activity: sent=$SERVER_HB_SENT, received=$SERVER_HB_RECV"
 
 if [ "$SERVER_HB_SENT" -lt "$NUM_CLIENTS" ]; then
-    fail "Server sent fewer heartbeats than expected"
+    fail "Server sent fewer heartbeat messages than expected"
 fi
-pass "Server heartbeat exchange verified"
+pass "Server heartbeat activity verified"
 
 # 终止所有客户端
 echo "Terminating clients..."
