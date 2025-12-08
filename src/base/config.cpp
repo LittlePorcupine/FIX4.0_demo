@@ -1,3 +1,8 @@
+/**
+ * @file config.cpp
+ * @brief Config 类实现
+ */
+
 #include "base/config.hpp"
 #include <fstream>
 #include <algorithm>

@@ -1,3 +1,11 @@
+/**
+ * @file reactor.hpp
+ * @brief Reactor 模式事件循环实现
+ *
+ * 提供跨平台的 I/O 多路复用封装，支持 Linux (epoll) 和 macOS (kqueue)。
+ * 采用边缘触发（ET）模式，通过无锁队列实现线程安全的异步任务提交。
+ */
+
 #pragma once
 
 #include <functional>
@@ -25,50 +33,183 @@
 
 namespace fix40 {
 
+/**
+ * @enum EventType
+ * @brief I/O 事件类型
+ */
 enum class EventType : uint32_t {
-    READ = 1,
-    WRITE = 2
+    READ = 1,   ///< 可读事件
+    WRITE = 2   ///< 可写事件
 };
 
+/**
+ * @class Reactor
+ * @brief 基于 Reactor 模式的事件循环
+ *
+ * 封装 epoll (Linux) 或 kqueue (macOS) 实现高性能 I/O 多路复用。
+ *
+ * @par 设计特点
+ * - 边缘触发（ET）模式，减少系统调用次数
+ * - 无锁任务队列，支持跨线程安全提交任务
+ * - 支持文件描述符事件和定时器事件
+ * - 通过 eventfd/pipe 实现跨线程唤醒
+ *
+ * @par 线程模型
+ * - run() 方法在单线程中执行事件循环
+ * - add_fd/modify_fd/remove_fd/add_timer 可从任意线程调用
+ * - 实际的 fd 操作通过任务队列在事件循环线程中执行
+ *
+ * @par 使用示例
+ * @code
+ * Reactor reactor;
+ * 
+ * // 注册读事件
+ * reactor.add_fd(client_fd, [](int fd) {
+ *     char buf[1024];
+ *     read(fd, buf, sizeof(buf));
+ * });
+ * 
+ * // 添加定时器
+ * reactor.add_timer(1000, [](int) {
+ *     std::cout << "Timer fired!" << std::endl;
+ * });
+ * 
+ * // 启动事件循环（阻塞）
+ * reactor.run();
+ * @endcode
+ */
 class Reactor {
 public:
+    /// 文件描述符事件回调类型，参数为触发事件的 fd
     using FdCallback = std::function<void(int)>;
+    /// 异步任务类型
     using Task = std::function<void()>;
 
+    /**
+     * @brief 构造 Reactor
+     *
+     * 创建 epoll/kqueue 实例和唤醒机制（eventfd/pipe）。
+     *
+     * @throws std::runtime_error 创建失败时抛出异常
+     */
     Reactor();
+
+    /**
+     * @brief 析构 Reactor
+     *
+     * 关闭 epoll/kqueue 实例和所有定时器 fd。
+     */
     ~Reactor();
 
-    // 改为异步任务提交
+    /**
+     * @brief 注册文件描述符的读事件
+     * @param fd 文件描述符（应已设置为非阻塞）
+     * @param cb 读事件回调函数
+     *
+     * 可从任意线程调用，实际注册在事件循环线程中执行。
+     */
     void add_fd(int fd, FdCallback cb);
+
+    /**
+     * @brief 修改文件描述符的事件监听
+     * @param fd 文件描述符
+     * @param event_mask 事件掩码（EventType::READ | EventType::WRITE）
+     * @param write_cb 写事件回调函数（可为 nullptr）
+     *
+     * 用于动态添加/移除写事件监听。
+     */
     void modify_fd(int fd, uint32_t event_mask, FdCallback write_cb);
+
+    /**
+     * @brief 添加周期性定时器
+     * @param interval_ms 定时间隔（毫秒）
+     * @param cb 定时器回调函数
+     *
+     * @note Linux 使用 timerfd，macOS 使用 kqueue EVFILT_TIMER
+     */
     void add_timer(int interval_ms, FdCallback cb);
+
+    /**
+     * @brief 移除文件描述符
+     * @param fd 要移除的文件描述符
+     *
+     * 从 epoll/kqueue 中移除 fd 并清理回调。
+     */
     void remove_fd(int fd);
 
+    /**
+     * @brief 启动事件循环
+     *
+     * 阻塞当前线程，持续处理 I/O 事件直到调用 stop()。
+     *
+     * @par 事件循环流程
+     * 1. 处理任务队列中的挂起任务
+     * 2. 调用 epoll_wait/kevent 等待事件
+     * 3. 分发事件到对应的回调函数
+     * 4. 重复以上步骤
+     */
     void run();
+
+    /**
+     * @brief 停止事件循环
+     *
+     * 设置停止标志并唤醒事件循环，使 run() 返回。
+     * 可从任意线程调用。
+     */
     void stop();
+
+    /**
+     * @brief 检查事件循环是否正在运行
+     * @return true 正在运行
+     * @return false 已停止或未启动
+     */
     bool is_running() const;
 
 private:
+    /**
+     * @brief 实际执行添加 fd 操作
+     * @param fd 文件描述符
+     * @param cb 回调函数
+     */
     void do_add_fd(int fd, FdCallback cb);
+
+    /**
+     * @brief 实际执行修改 fd 操作
+     */
     void do_modify_fd(int fd, uint32_t event_mask, FdCallback write_cb);
+
+    /**
+     * @brief 实际执行添加定时器操作
+     */
     void do_add_timer(int interval_ms, FdCallback cb);
+
+    /**
+     * @brief 实际执行移除 fd 操作
+     */
     void do_remove_fd(int fd);
+
+    /**
+     * @brief 处理任务队列中的所有挂起任务
+     */
     void process_tasks();
+
+    /**
+     * @brief 唤醒阻塞在 epoll_wait/kevent 的事件循环
+     */
     void wakeup();
 
-    int io_fd_; // epoll 或 kqueue 的通用 fd
+    int io_fd_; ///< epoll 或 kqueue 的文件描述符
 #ifdef __linux__
-    int wakeup_fd_; // Linux 使用 eventfd
+    int wakeup_fd_; ///< Linux 使用 eventfd 唤醒
 #else
-    int wakeup_pipe_[2]; // macOS 使用 pipe
+    int wakeup_pipe_[2]; ///< macOS 使用 pipe 唤醒
 #endif
-    std::atomic<bool> running_;
-    std::unordered_map<int, FdCallback> callbacks_;
-    std::unordered_map<int, FdCallback> write_callbacks_;
-    // std::mutex mutex_; // <<<<< 核心修改：移除互斥锁
-    std::vector<int> timer_fds_; // 仅用于 Linux
+    std::atomic<bool> running_;  ///< 运行状态标志
+    std::unordered_map<int, FdCallback> callbacks_;       ///< 读事件回调映射
+    std::unordered_map<int, FdCallback> write_callbacks_; ///< 写事件回调映射
+    std::vector<int> timer_fds_; ///< 定时器 fd 列表（仅 Linux）
 
-    moodycamel::ConcurrentQueue<Task> tasks_;
+    moodycamel::ConcurrentQueue<Task> tasks_; ///< 无锁任务队列
 };
 
 // --- 实现 ---

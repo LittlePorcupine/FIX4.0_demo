@@ -1,3 +1,8 @@
+/**
+ * @file fix_frame_decoder.cpp
+ * @brief FixFrameDecoder 类实现
+ */
+
 #include "fix/fix_frame_decoder.hpp"
 #include "base/config.hpp"
 #include <stdexcept>
@@ -15,8 +20,8 @@ bool FixFrameDecoder::can_append(size_t len) const {
 }
 
 void FixFrameDecoder::append(const char* data, size_t len) {
-    // Safe overflow prevention: use subtraction instead of addition
-    // This prevents integer overflow when buffer_.size() + len would exceed SIZE_MAX
+    // 安全的溢出防护：使用减法代替加法
+    // 当 buffer_.size() + len 可能超过 SIZE_MAX 时，这可以防止整数溢出
     if (buffer_.size() >= max_buffer_size_ || len > max_buffer_size_ - buffer_.size()) {
         // 让上层 Connection 或 Session 来决定如何处理这个错误
         throw std::runtime_error("Buffer size limit exceeded. Closing connection.");

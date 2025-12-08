@@ -1,3 +1,8 @@
+/**
+ * @file connection.cpp
+ * @brief Connection 类实现
+ */
+
 #include "core/connection.hpp"
 #include "fix/session.hpp"
 #include "core/reactor.hpp"
