@@ -1,3 +1,10 @@
+/**
+ * @file main.cpp
+ * @brief FIX 服务端入口点
+ *
+ * 加载配置，创建服务端实例并启动监听。
+ */
+
 #include "server/server.hpp"
 #include "base/config.hpp"
 #include "base/logger.hpp"
@@ -5,11 +12,18 @@
 #include <csignal>
 #include <filesystem>
 
+/**
+ * @brief 服务端主函数
+ * @param argc 命令行参数数量
+ * @param argv 命令行参数数组
+ * @return int 退出码（0=成功，1=失败）
+ *
+ * 命令行参数：
+ * - argv[1]: 工作线程数（可选，0 或不指定表示使用 CPU 核心数）
+ * - argv[2]: 监听端口（可选，默认从配置读取）
+ */
 int main(int argc, char* argv[]) {
-    // 全局忽略 SIGPIPE 信号
-    // 这是 Unix 系统网络应用的通常做法
-    // 当向已关闭的端口写数据时，避免程序立即结束，
-    // 此时 send() 会返回 -1 带 errno=EPIPE
+    // 忽略 SIGPIPE 信号，防止写入已关闭的 socket 时程序退出
     signal(SIGPIPE, SIG_IGN);
 
     try {

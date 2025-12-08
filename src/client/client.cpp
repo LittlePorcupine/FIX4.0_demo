@@ -1,3 +1,8 @@
+/**
+ * @file client.cpp
+ * @brief FIX 客户端实现
+ */
+
 #include "client/client.hpp"
 #include "core/reactor.hpp"
 #include "base/thread_pool.hpp"

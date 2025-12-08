@@ -1,3 +1,11 @@
+/**
+ * @file fix_codec.hpp
+ * @brief FIX 消息编解码器
+ *
+ * 提供 FIX 消息的序列化和反序列化功能，
+ * 自动处理 BodyLength 和 CheckSum 的计算与校验。
+ */
+
 #pragma once
 
 #include <cstdint>
@@ -16,22 +24,47 @@
 
 namespace fix40 {
 
-// FIX 分隔符：ASCII 0x01
+/// FIX 字段分隔符：ASCII SOH (0x01)
 constexpr char SOH = '\x01';
 
 /**
  * @class FixMessage
- * @brief 代表一个FIX报文的面向对象封装.
+ * @brief FIX 消息的面向对象封装
  *
- * 封装了报文的字段，提供了类型安全的访问接口，并隐藏了内部存储细节.
+ * 封装 FIX 消息的字段，提供类型安全的访问接口。
+ *
+ * @par 使用示例
+ * @code
+ * FixMessage msg;
+ * msg.set(tags::MsgType, "A");
+ * msg.set(tags::HeartBtInt, 30);
+ * 
+ * std::string type = msg.get_string(tags::MsgType);
+ * int hb = msg.get_int(tags::HeartBtInt);
+ * @endcode
  */
 class FixMessage {
 public:
-    // 设置字段值
+    /**
+     * @brief 设置字符串类型字段
+     * @param tag 标签编号
+     * @param value 字段值
+     */
     void set(int tag, const std::string& value) { fields_[tag] = value; }
+
+    /**
+     * @brief 设置整数类型字段
+     * @param tag 标签编号
+     * @param value 字段值（自动转换为字符串）
+     */
     void set(int tag, int value) { fields_[tag] = std::to_string(value); }
 
-    // 获取字段值
+    /**
+     * @brief 获取字符串类型字段值
+     * @param tag 标签编号
+     * @return std::string 字段值
+     * @throws std::runtime_error 标签不存在时抛出异常
+     */
     std::string get_string(int tag) const {
         auto it = fields_.find(tag);
         if (it == fields_.end()) {
@@ -40,34 +73,72 @@ public:
         return it->second;
     }
 
+    /**
+     * @brief 获取整数类型字段值
+     * @param tag 标签编号
+     * @return int 字段值
+     * @throws std::runtime_error 标签不存在或转换失败时抛出异常
+     */
     int get_int(int tag) const {
         return std::stoi(get_string(tag));
     }
 
+    /**
+     * @brief 检查标签是否存在
+     * @param tag 标签编号
+     * @return true 标签存在
+     * @return false 标签不存在
+     */
     bool has(int tag) const {
         return fields_.count(tag) > 0;
     }
 
+    /**
+     * @brief 获取所有字段的只读引用
+     * @return const std::unordered_map<int, std::string>& 字段映射
+     */
     const std::unordered_map<int, std::string>& get_fields() const {
         return fields_;
     }
 
 private:
     friend class FixCodec;
-    std::unordered_map<int, std::string> fields_;
+    std::unordered_map<int, std::string> fields_; ///< 字段存储：tag -> value
 };
 
 
 /**
  * @class FixCodec
- * @brief 负责FIX报文的序列化和反序列化.
+ * @brief FIX 消息编解码器
  *
- * 将 FixMessage 对象编码为字符串，或将字符串解码为 FixMessage 对象.
- * 自动处理 BodyLength 和 CheckSum.
+ * 负责 FIX 消息的序列化（编码）和反序列化（解码）。
+ *
+ * @par 编码流程
+ * 1. 自动添加 SendingTime (52)
+ * 2. 按标准顺序构造消息头
+ * 3. 计算并设置 BodyLength (9)
+ * 4. 计算并附加 CheckSum (10)
+ *
+ * @par 解码流程
+ * 1. 校验 CheckSum
+ * 2. 解析所有字段
+ * 3. 校验 BodyLength
+ *
+ * @par FIX 消息格式
+ * @code
+ * 8=FIX.4.0|9=BodyLength|35=MsgType|49=Sender|56=Target|34=SeqNum|52=Time|...|10=Checksum|
+ * @endcode
+ * 其中 | 代表 SOH 分隔符
  */
 class FixCodec {
 public:
-    // 将 FixMessage 对象编码为符合FIX协议的字符串
+    /**
+     * @brief 将 FixMessage 编码为 FIX 协议字符串
+     * @param msg 要编码的消息对象（会被修改以添加时间戳等字段）
+     * @return std::string 编码后的 FIX 消息字符串
+     *
+     * @note 自动计算并设置 BodyLength 和 CheckSum
+     */
     std::string encode(FixMessage& msg) const {
         // 1. 准备时间戳
         char ts[32];
@@ -113,7 +184,12 @@ public:
         return prefix + std::to_string(tags::CheckSum) + "=" + checksum + SOH;
     }
 
-    // 将原始FIX字符串解码为 FixMessage 对象，同时进行校验
+    /**
+     * @brief 将 FIX 协议字符串解码为 FixMessage 对象
+     * @param raw 原始 FIX 消息字符串
+     * @return FixMessage 解码后的消息对象
+     * @throws std::runtime_error CheckSum 校验失败、BodyLength 不匹配或格式错误时抛出
+     */
     FixMessage decode(const std::string& raw) const {
         // 1. 校验和验证
         const std::string checksum_tag = std::string(1, SOH) + std::to_string(tags::CheckSum) + "=";
@@ -160,6 +236,11 @@ public:
     }
 
 private:
+    /**
+     * @brief 从消息中构建消息体部分
+     * @param msg 消息对象
+     * @return std::string 消息体字符串（不含标准头和尾）
+     */
     std::string build_body_from_message(const FixMessage& msg) const {
         std::ostringstream body;
 
@@ -182,6 +263,13 @@ private:
         return body.str();
     }
 
+    /**
+     * @brief 计算 FIX 校验和
+     * @param data 要计算校验和的数据
+     * @return std::string 3 位数字的校验和字符串
+     *
+     * 校验和 = 所有字节之和 mod 256，格式化为 3 位数字
+     */
     std::string calculate_checksum(const std::string& data) const {
         const uint32_t sum = std::accumulate(data.begin(), data.end(), 0U);
         std::ostringstream oss;
@@ -189,6 +277,13 @@ private:
         return oss.str();
     }
 
+    /**
+     * @brief 生成 UTC 时间戳
+     * @param buf 输出缓冲区
+     * @param buf_size 缓冲区大小
+     *
+     * 格式：YYYYMMDD-HH:MM:SS
+     */
     void generate_utc_timestamp(char* buf, size_t buf_size) const {
         std::time_t t = std::time(nullptr);
         std::tm tm{};

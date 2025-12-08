@@ -1,3 +1,8 @@
+/**
+ * @file server.cpp
+ * @brief FIX 服务端实现
+ */
+
 #include "server/server.hpp"
 #include "base/config.hpp"
 #include "base/logger.hpp"
@@ -155,7 +160,7 @@ void FixServer::on_new_connection(int fd) {
     // 计算这个连接绑定到哪个工作线程
     size_t thread_index = static_cast<size_t>(fd) % worker_pool_->get_thread_count();
     LOG() << "Accepted new connection with fd: " << fd 
-          << ", bindded to thread " << thread_index;
+          << ", bound to thread " << thread_index;
 
     auto on_conn_close = [this, fd, thread_index]() {
         // 使用 enqueue_to 确保关闭操作在连接绑定的线程中执行，

@@ -1,3 +1,14 @@
+/**
+ * @file fix_messages.hpp
+ * @brief FIX 会话层消息工厂函数
+ *
+ * 提供创建标准 FIX 会话层消息的便捷函数，包括：
+ * - Logon (A) - 登录
+ * - Heartbeat (0) - 心跳
+ * - TestRequest (1) - 测试请求
+ * - Logout (5) - 登出
+ */
+
 #pragma once
 
 #include "fix/fix_codec.hpp"
@@ -6,9 +17,19 @@
 
 namespace fix40 {
 
-/* ------------------------------------------------------------
- * 创建一个 Logon 类型的 FixMessage 对象
- * ---------------------------------------------------------- */
+/**
+ * @brief 创建 Logon 消息
+ * @param sender 发送方 CompID
+ * @param target 接收方 CompID
+ * @param seq_num 消息序列号（默认为 1）
+ * @param heart_bt 心跳间隔秒数（默认从配置读取）
+ * @return FixMessage Logon 消息对象
+ *
+ * Logon 消息用于建立 FIX 会话，包含：
+ * - MsgType (35) = "A"
+ * - EncryptMethod (98) = "0" (无加密)
+ * - HeartBtInt (108) = 心跳间隔
+ */
 inline FixMessage create_logon_message(const std::string& sender,
                                        const std::string& target,
                                        int seq_num = 1,
@@ -23,9 +44,21 @@ inline FixMessage create_logon_message(const std::string& sender,
     return logon;
 }
 
-/* ------------------------------------------------------------
- * 创建一个 Heartbeat (心跳) 类型的 FixMessage 对象
- * ---------------------------------------------------------- */
+/**
+ * @brief 创建 Heartbeat 消息
+ * @param sender 发送方 CompID
+ * @param target 接收方 CompID
+ * @param seq_num 消息序列号
+ * @param test_req_id TestReqID（响应 TestRequest 时填写，否则为空）
+ * @return FixMessage Heartbeat 消息对象
+ *
+ * Heartbeat 消息用于：
+ * 1. 定期发送以维持连接活跃
+ * 2. 响应 TestRequest（此时需包含对应的 TestReqID）
+ *
+ * - MsgType (35) = "0"
+ * - TestReqID (112) = 可选
+ */
 inline FixMessage create_heartbeat_message(const std::string& sender,
                                            const std::string& target,
                                            int seq_num,
@@ -43,9 +76,20 @@ inline FixMessage create_heartbeat_message(const std::string& sender,
     return hb;
 }
 
-/* ------------------------------------------------------------
- * 创建一个 Test Request (测试请求) 类型的 FixMessage 对象
- * ---------------------------------------------------------- */
+/**
+ * @brief 创建 TestRequest 消息
+ * @param sender 发送方 CompID
+ * @param target 接收方 CompID
+ * @param seq_num 消息序列号
+ * @param test_req_id 测试请求标识符（必填，对方需在 Heartbeat 中回传）
+ * @return FixMessage TestRequest 消息对象
+ *
+ * TestRequest 消息用于检测对端是否存活。
+ * 对端收到后应回复包含相同 TestReqID 的 Heartbeat。
+ *
+ * - MsgType (35) = "1"
+ * - TestReqID (112) = 必填
+ */
 inline FixMessage create_test_request_message(const std::string& sender,
                                               const std::string& target,
                                               int seq_num,
@@ -55,13 +99,24 @@ inline FixMessage create_test_request_message(const std::string& sender,
     tr.set(tags::SenderCompID, sender);
     tr.set(tags::TargetCompID, target);
     tr.set(tags::MsgSeqNum, seq_num);
-    tr.set(tags::TestReqID, test_req_id); // 对于测试请求，TestReqID 是必需的
+    tr.set(tags::TestReqID, test_req_id);
     return tr;
 }
 
-/* ------------------------------------------------------------
- * 创建一个 Logout (会话结束) 类型的 FixMessage 对象
- * ---------------------------------------------------------- */
+/**
+ * @brief 创建 Logout 消息
+ * @param sender 发送方 CompID
+ * @param target 接收方 CompID
+ * @param seq_num 消息序列号
+ * @param text 登出原因（可选）
+ * @return FixMessage Logout 消息对象
+ *
+ * Logout 消息用于优雅地终止 FIX 会话。
+ * 发起方发送 Logout 后等待对方确认，然后关闭连接。
+ *
+ * - MsgType (35) = "5"
+ * - Text (58) = 可选，说明登出原因
+ */
 inline FixMessage create_logout_message(const std::string& sender,
                                         const std::string& target,
                                         int seq_num,
@@ -76,4 +131,5 @@ inline FixMessage create_logout_message(const std::string& sender,
     }
     return lo;
 }
-} // fix40 名称空间结束
+
+} // namespace fix40

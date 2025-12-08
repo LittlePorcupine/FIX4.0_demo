@@ -1,3 +1,10 @@
+/**
+ * @file session.cpp
+ * @brief FIX 会话层实现
+ *
+ * 实现 Session 类和各状态处理器类。
+ */
+
 #include "fix/session.hpp"
 
 #include <iomanip>
@@ -23,9 +30,12 @@ class LogonSentState;
 class EstablishedState;
 class LogoutSentState;
 
-// =================================================================================
-// 断开状态
-// =================================================================================
+/**
+ * @class DisconnectedState
+ * @brief 断开连接状态
+ *
+ * 初始状态，等待会话启动或接收 Logon 消息。
+ */
 class DisconnectedState : public IStateHandler {
 public:
     void onMessageReceived(Session& context, const FixMessage& msg) override;
@@ -35,9 +45,12 @@ public:
     const char* getStateName() const override { return "Disconnected"; }
 };
 
-// =================================================================================
-// 已发送Logon状态（客户端）
-// =================================================================================
+/**
+ * @class LogonSentState
+ * @brief 已发送 Logon 状态（客户端）
+ *
+ * 客户端发送 Logon 后进入此状态，等待服务端确认。
+ */
 class LogonSentState : public IStateHandler {
 public:
     void onMessageReceived(Session& context, const FixMessage& msg) override;
@@ -47,21 +60,28 @@ public:
     const char* getStateName() const override { return "LogonSent"; }
 };
 
-// =================================================================================
-// 已建立状态
-// =================================================================================
+/**
+ * @class EstablishedState
+ * @brief 会话已建立状态
+ *
+ * 正常工作状态，处理心跳、TestRequest 和业务消息。
+ */
 class EstablishedState : public IStateHandler {
 private:
     using MessageHandler = void (EstablishedState::*)(Session&, const FixMessage&);
-    const std::unordered_map<std::string, MessageHandler> messageHandlers_;
+    const std::unordered_map<std::string, MessageHandler> messageHandlers_; ///< 消息处理器映射
     
-    std::string awaitingTestReqId_; // 状态内部管理自己的数据
-    std::chrono::steady_clock::time_point logout_initiation_time_;
-    bool logout_initiated_ = false;
+    std::string awaitingTestReqId_;  ///< 等待响应的 TestReqID
+    std::chrono::steady_clock::time_point logout_initiation_time_; ///< 登出发起时间
+    bool logout_initiated_ = false;  ///< 是否已发起登出
 
+    /** @brief 处理 Heartbeat 消息 */
     void handleHeartbeat(Session& context, const FixMessage& msg);
+    /** @brief 处理 TestRequest 消息 */
     void handleTestRequest(Session& context, const FixMessage& msg);
+    /** @brief 处理 Logout 消息 */
     void handleLogout(Session& context, const FixMessage& msg);
+    /** @brief 处理 Logon 消息（异常情况） */
     void handleLogon(Session& context, const FixMessage& msg);
 
 public:
@@ -73,14 +93,21 @@ public:
     const char* getStateName() const override { return "Established"; }
 };
 
-// =================================================================================
-// 已发送Logout状态
-// =================================================================================
+/**
+ * @class LogoutSentState
+ * @brief 已发送 Logout 状态
+ *
+ * 发送 Logout 后进入此状态，等待对方确认或超时。
+ */
 class LogoutSentState : public IStateHandler {
 private:
-    std::string reason_;
-    std::chrono::steady_clock::time_point initiation_time_;
+    std::string reason_;  ///< 登出原因
+    std::chrono::steady_clock::time_point initiation_time_; ///< 发起时间
 public:
+    /**
+     * @brief 构造 LogoutSentState
+     * @param reason 登出原因
+     */
     explicit LogoutSentState(std::string reason);
     void onMessageReceived(Session& context, const FixMessage& msg) override;
     void onTimerCheck(Session& context) override;

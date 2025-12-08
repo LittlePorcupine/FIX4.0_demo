@@ -1,3 +1,10 @@
+/**
+ * @file main.cpp
+ * @brief FIX 客户端入口点
+ *
+ * 加载配置，创建客户端实例，连接服务器并运行控制台交互。
+ */
+
 #include "client/client.hpp"
 #include "base/config.hpp"
 #include "base/logger.hpp"
@@ -5,9 +12,18 @@
 #include <csignal>
 #include <filesystem>
 
+/**
+ * @brief 客户端主函数
+ * @param argc 命令行参数数量
+ * @param argv 命令行参数数组
+ * @return int 退出码（0=成功，1=失败）
+ *
+ * 命令行参数：
+ * - argv[1]: 服务器 IP（可选，默认从配置读取）
+ * - argv[2]: 服务器端口（可选，默认从配置读取）
+ */
 int main(int argc, char* argv[]) {
-    // 当写入已被关闭读取端的套接字时，此设置可防止程序退出，
-    // 此时 send() 将返回 -1 并设置 errno=EPIPE。
+    // 忽略 SIGPIPE 信号，防止写入已关闭的 socket 时程序退出
     signal(SIGPIPE, SIG_IGN);
 
     try {
