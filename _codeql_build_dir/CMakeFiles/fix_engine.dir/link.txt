@@ -1,0 +1,2 @@
+/usr/bin/ar qc libfix_engine.a CMakeFiles/fix_engine.dir/src/fix/session.cpp.o CMakeFiles/fix_engine.dir/src/core/connection.cpp.o CMakeFiles/fix_engine.dir/src/fix/fix_frame_decoder.cpp.o CMakeFiles/fix_engine.dir/src/base/config.cpp.o CMakeFiles/fix_engine.dir/src/app/simulation_app.cpp.o CMakeFiles/fix_engine.dir/src/app/matching_engine.cpp.o
+/usr/bin/ranlib libfix_engine.a
