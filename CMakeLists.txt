@@ -21,6 +21,8 @@ add_library(fix_engine STATIC
     src/core/connection.cpp
     src/fix/fix_frame_decoder.cpp
     src/base/config.cpp
+    src/app/simulation_app.cpp
+    src/app/matching_engine.cpp
 )
 
 # 为 fix_engine 库指定头文件搜索路径

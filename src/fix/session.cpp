@@ -14,6 +14,7 @@
 
 #include "core/connection.hpp"
 #include "fix/fix_messages.hpp"
+#include "fix/application.hpp"
 #include "base/timing_wheel.hpp"
 #include "base/config.hpp"
 #include "base/logger.hpp"
@@ -55,7 +56,7 @@ class LogonSentState : public IStateHandler {
 public:
     void onMessageReceived(Session& context, const FixMessage& msg) override;
     void onTimerCheck(Session& context) override;
-    void onSessionStart(Session& context) override;
+    void onSessionStart([[maybe_unused]] Session& context) override {}
     void onLogoutRequest(Session& context, const std::string& reason) override;
     const char* getStateName() const override { return "LogonSent"; }
 };
@@ -88,7 +89,7 @@ public:
     EstablishedState();
     void onMessageReceived(Session& context, const FixMessage& msg) override;
     void onTimerCheck(Session& context) override;
-    void onSessionStart(Session& context) override {}
+    void onSessionStart([[maybe_unused]] Session& context) override {}
     void onLogoutRequest(Session& context, const std::string& reason) override;
     const char* getStateName() const override { return "Established"; }
 };
@@ -111,7 +112,7 @@ public:
     explicit LogoutSentState(std::string reason);
     void onMessageReceived(Session& context, const FixMessage& msg) override;
     void onTimerCheck(Session& context) override;
-    void onSessionStart(Session& context) override {}
+    void onSessionStart([[maybe_unused]] Session& context) override {}
     void onLogoutRequest(Session& context, const std::string& reason) override;
     const char* getStateName() const override { return "LogoutSent"; }
 };
@@ -147,6 +148,36 @@ Session::~Session() {
 
 void Session::set_connection(std::weak_ptr<Connection> conn) {
     connection_ = std::move(conn);
+}
+
+void Session::set_application(Application* app) {
+    application_ = app;
+}
+
+Application* Session::get_application() const {
+    return application_;
+}
+
+SessionID Session::get_session_id() const {
+    return SessionID(senderCompID, targetCompID);
+}
+
+void Session::send_app_message(FixMessage& msg) {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    
+    // 调用应用层的 toApp 回调
+    if (application_) {
+        try {
+            application_->toApp(msg, get_session_id());
+        } catch (const std::exception& e) {
+            LOG() << "Application::toApp threw exception: " << e.what();
+        } catch (...) {
+            LOG() << "Application::toApp threw unknown exception";
+        }
+    }
+    
+    // 使用标准发送流程
+    send(msg);
 }
 
 void Session::start() {
@@ -239,6 +270,18 @@ void Session::perform_shutdown(const std::string& reason) {
     if (shutting_down_.exchange(true)) return;
 
     LOG() << "Session shutting down. Reason: " << reason;
+    
+    // 通知应用层会话即将断开
+    if (application_) {
+        try {
+            application_->onLogout(get_session_id());
+        } catch (const std::exception& e) {
+            LOG() << "Application::onLogout threw exception: " << e.what();
+        } catch (...) {
+            LOG() << "Application::onLogout threw unknown exception";
+        }
+    }
+    
     stop();
 
     changeState(std::make_unique<DisconnectedState>());
@@ -332,6 +375,17 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
                 auto logon_ack = create_logon_message(context.senderCompID, context.targetCompID, 1, context.get_heart_bt_int());
                 context.send(logon_ack);
                 context.changeState(std::make_unique<EstablishedState>());
+                
+                // 通知应用层会话已建立
+                if (Application* app = context.get_application()) {
+                    try {
+                        app->onLogon(context.get_session_id());
+                    } catch (const std::exception& e) {
+                        LOG() << "Application::onLogon threw exception: " << e.what();
+                    } catch (...) {
+                        LOG() << "Application::onLogon threw unknown exception";
+                    }
+                }
             } else {
                 std::string reason = "HeartBtInt=" + std::to_string(client_hb_interval) + " is out of acceptable range [" + std::to_string(server_min_hb) + ", " + std::to_string(server_max_hb) + "].";
                 LOG() << reason;
@@ -364,12 +418,22 @@ void LogonSentState::onMessageReceived(Session& context, const FixMessage& msg) 
         context.increment_recv_seq_num();
         LOG() << "Logon confirmation received. Session established.";
         context.changeState(std::make_unique<EstablishedState>());
+        
+        // 通知应用层会话已建立
+        if (Application* app = context.get_application()) {
+            try {
+                app->onLogon(context.get_session_id());
+            } catch (const std::exception& e) {
+                LOG() << "Application::onLogon threw exception: " << e.what();
+            } catch (...) {
+                LOG() << "Application::onLogon threw unknown exception";
+            }
+        }
     } else {
         context.perform_shutdown("Received non-Logon message while waiting for Logon confirmation.");
     }
 }
 void LogonSentState::onTimerCheck([[maybe_unused]] Session& context) { /* 这里可以添加登录超时逻辑 */ }
-void LogonSentState::onSessionStart([[maybe_unused]] Session& context) { /* 已处理 */ }
 void LogonSentState::onLogoutRequest(Session& context, const std::string& reason) {
     context.perform_shutdown("Logout requested during logon process: " + reason);
 }
@@ -388,10 +452,35 @@ void EstablishedState::onMessageReceived(Session& context, const FixMessage& msg
     
     auto it = messageHandlers_.find(msg_type);
     if (it != messageHandlers_.end()) {
+        // 会话层消息，由状态机处理
         (this->*(it->second))(context, msg);
+        
+        // 通知应用层收到管理消息（可选回调）
+        if (Application* app = context.get_application()) {
+            try {
+                app->fromAdmin(msg, context.get_session_id());
+            } catch (const std::exception& e) {
+                LOG() << "Application::fromAdmin threw exception: " << e.what();
+            } catch (...) {
+                LOG() << "Application::fromAdmin threw unknown exception";
+            }
+        }
     } else {
-        // 处理业务消息或未知类型
-        LOG() << "Received business message or unknown type: " << msg_type;
+        // 业务消息，委托给应用层处理
+        Application* app = context.get_application();
+        if (app) {
+            try {
+                app->fromApp(msg, context.get_session_id());
+            } catch (const std::exception& e) {
+                LOG() << "Application::fromApp threw exception: " << e.what();
+                // 可选：发送 BusinessMessageReject
+            } catch (...) {
+                LOG() << "Application::fromApp threw unknown exception";
+            }
+        } else {
+            LOG() << "Received business message (MsgType=" << msg_type 
+                  << ") but no Application is set. Message ignored.";
+        }
     }
 }
 

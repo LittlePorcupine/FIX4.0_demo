@@ -19,6 +19,7 @@
 #include "base/timing_wheel.hpp"
 #include "core/connection.hpp"
 #include "fix/session.hpp"
+#include "fix/application.hpp"
 
 namespace fix40 {
 
@@ -32,8 +33,8 @@ void FixServer::signal_handler(int signum) {
     }
 }
 
-FixServer::FixServer(int port, int num_threads)
-    : port_(port), listen_fd_(-1) {
+FixServer::FixServer(int port, int num_threads, Application* app)
+    : port_(port), listen_fd_(-1), application_(app) {
 
     auto& config = Config::instance();
     worker_pool_ = std::make_unique<ThreadPool>(num_threads > 0 ? num_threads : std::thread::hardware_concurrency());
@@ -177,6 +178,11 @@ void FixServer::on_new_connection(int fd) {
         worker_pool_.get(), thread_index
     );
     session->set_connection(connection);
+    
+    // 设置应用层处理器
+    if (application_) {
+        session->set_application(application_);
+    }
 
     {
         std::lock_guard<std::mutex> lock(connections_mutex_);

@@ -20,6 +20,7 @@ class Reactor;
 class ThreadPool;
 class TimingWheel;
 class Connection;
+class Application;
 
 /**
  * @class FixServer
@@ -48,9 +49,10 @@ public:
      * @brief 构造服务端
      * @param port 监听端口
      * @param num_threads 工作线程数（0 表示使用 CPU 核心数）
+     * @param app 应用层处理器指针（可选，用于处理业务消息）
      * @throws std::runtime_error 创建 socket 或绑定失败时抛出
      */
-    FixServer(int port, int num_threads);
+    FixServer(int port, int num_threads, Application* app = nullptr);
 
     /**
      * @brief 析构函数
@@ -98,6 +100,8 @@ private:
     std::mutex connections_mutex_; ///< 保护 connections_ 的互斥锁
 
     static FixServer* instance_for_signal_; ///< 信号处理用的静态实例指针
+
+    Application* application_ = nullptr;  ///< 应用层处理器指针
 };
 
 } // namespace fix40
