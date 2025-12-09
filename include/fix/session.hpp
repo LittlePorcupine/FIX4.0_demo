@@ -4,6 +4,9 @@
  *
  * 实现 FIX 协议的会话层状态机，管理会话生命周期、
  * 心跳检测、消息序列号等。
+ * 
+ * 会话层仅处理 FIX 协议的会话消息（Logon、Logout、Heartbeat、TestRequest），
+ * 业务消息通过 Application 接口委托给应用层处理。
  */
 
 #pragma once
@@ -16,6 +19,7 @@
 #include <memory>
 
 #include "fix/fix_codec.hpp"
+#include "fix/application.hpp"
 #include "base/concurrentqueue.h"
 #include "base/timing_wheel.hpp"
 
@@ -140,6 +144,39 @@ public:
      * @param conn Connection 的弱引用
      */
     void set_connection(std::weak_ptr<Connection> conn);
+
+    /**
+     * @brief 设置应用层处理器
+     * @param app Application 实现类指针
+     *
+     * 设置后，收到业务消息时会调用 app->fromApp()，
+     * 会话建立/断开时会调用 app->onLogon()/onLogout()。
+     *
+     * @note Application 的生命周期必须比 Session 长
+     * @note 可传入 nullptr 取消关联
+     */
+    void set_application(Application* app);
+
+    /**
+     * @brief 获取应用层处理器
+     * @return Application* 当前关联的 Application 指针，可能为 nullptr
+     */
+    Application* get_application() const;
+
+    /**
+     * @brief 获取会话标识符
+     * @return SessionID 包含 senderCompID 和 targetCompID
+     */
+    SessionID get_session_id() const;
+
+    /**
+     * @brief 发送业务消息
+     * @param msg 要发送的业务消息
+     *
+     * 与 send() 的区别是会先调用 Application::toApp() 回调，
+     * 允许应用层在发送前拦截或修改消息。
+     */
+    void send_app_message(FixMessage& msg);
 
     /**
      * @brief 启动会话
@@ -332,6 +369,8 @@ private:
 
     TimingWheel* timing_wheel_ = nullptr;  ///< 时间轮指针
     TimerTaskId timer_task_id_ = INVALID_TIMER_ID; ///< 定时任务 ID
+
+    Application* application_ = nullptr;  ///< 应用层处理器指针
 };
 
 } // namespace fix40

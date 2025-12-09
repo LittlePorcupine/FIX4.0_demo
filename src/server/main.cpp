@@ -8,6 +8,7 @@
 #include "server/server.hpp"
 #include "base/config.hpp"
 #include "base/logger.hpp"
+#include "app/simulation_app.hpp"
 #include <iostream>
 #include <csignal>
 #include <filesystem>
@@ -50,8 +51,15 @@ int main(int argc, char* argv[]) {
             port = std::stoi(argv[2]);
         }
         
-        fix40::FixServer server(port, num_threads);
+        // 创建模拟交易应用层并启动撮合引擎
+        fix40::SimulationApp app;
+        app.start();
+        
+        fix40::FixServer server(port, num_threads, &app);
         server.start();
+        
+        // 服务器停止后，停止撮合引擎
+        app.stop();
     } catch (const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << std::endl;
         return 1;

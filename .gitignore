@@ -21,3 +21,5 @@ tests_legacy/
 build-coverage/
 
 .cache/
+
+docs/
