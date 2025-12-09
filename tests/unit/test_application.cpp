@@ -282,6 +282,37 @@ TEST_CASE("Exception safety - fromApp exception is caught", "[application][excep
     REQUIRE(session->is_running());
 }
 
+TEST_CASE("Exception safety - toApp exception is caught", "[application][exception]") {
+    ThrowingApplication app;
+    auto session = std::make_shared<Session>("CLIENT", "SERVER", 30, [](){});
+    session->set_application(&app);
+    session->start();
+    
+    // 先建立会话（用 MockApplication 避免 onLogon 异常）
+    MockApplication mock_app;
+    session->set_application(&mock_app);
+    
+    FixMessage logon_ack;
+    logon_ack.set(tags::MsgType, "A");
+    logon_ack.set(tags::SenderCompID, "SERVER");
+    logon_ack.set(tags::TargetCompID, "CLIENT");
+    logon_ack.set(tags::MsgSeqNum, 1);
+    logon_ack.set(tags::HeartBtInt, 30);
+    session->on_message_received(logon_ack);
+    
+    // 切换到会抛异常的 Application
+    session->set_application(&app);
+    
+    // 发送业务消息 - toApp 会抛异常，但不应该崩溃
+    FixMessage order;
+    order.set(tags::MsgType, "D");
+    order.set(tags::SenderCompID, "CLIENT");
+    order.set(tags::TargetCompID, "SERVER");
+    
+    REQUIRE_NOTHROW(session->send_app_message(order));
+    REQUIRE(session->is_running());
+}
+
 TEST_CASE("No Application set - business messages are ignored", "[application]") {
     auto session = std::make_shared<Session>("CLIENT", "SERVER", 30, [](){});
     session->start();
