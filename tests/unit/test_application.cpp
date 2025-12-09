@@ -414,3 +414,26 @@ TEST_CASE("Server session with Application - onLogon called", "[application][ser
     REQUIRE(app.last_session_id.senderCompID == "SERVER");
     REQUIRE(app.last_session_id.targetCompID == "CLIENT");
 }
+
+TEST_CASE("Application callbacks - toApp when sending", "[application]") {
+    MockApplication app;
+    auto session = std::make_shared<Session>("CLIENT", "SERVER", 30, [](){});
+    session->set_application(&app);
+    session->start();
+    
+    // 先建立会话
+    FixMessage logon_ack;
+    logon_ack.set(tags::MsgType, "A");
+    logon_ack.set(tags::SenderCompID, "SERVER");
+    logon_ack.set(tags::TargetCompID, "CLIENT");
+    logon_ack.set(tags::MsgSeqNum, 1);
+    logon_ack.set(tags::HeartBtInt, 30);
+    session->on_message_received(logon_ack);
+    
+    // 发送业务消息
+    FixMessage msg;
+    msg.set(tags::MsgType, "8");
+    session->send_app_message(msg);
+    
+    REQUIRE(app.to_app_count == 1);
+}
