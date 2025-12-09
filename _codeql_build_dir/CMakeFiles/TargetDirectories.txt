@@ -1,5 +1,0 @@
-/home/runner/work/FIX4.0_demo/FIX4.0_demo/_codeql_build_dir/CMakeFiles/fix_engine.dir
-/home/runner/work/FIX4.0_demo/FIX4.0_demo/_codeql_build_dir/CMakeFiles/fix_server.dir
-/home/runner/work/FIX4.0_demo/FIX4.0_demo/_codeql_build_dir/CMakeFiles/fix_client.dir
-/home/runner/work/FIX4.0_demo/FIX4.0_demo/_codeql_build_dir/CMakeFiles/edit_cache.dir
-/home/runner/work/FIX4.0_demo/FIX4.0_demo/_codeql_build_dir/CMakeFiles/rebuild_cache.dir
