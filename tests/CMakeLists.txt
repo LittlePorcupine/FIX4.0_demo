@@ -29,6 +29,7 @@ add_library(fix_engine_test STATIC
     ../src/base/config.cpp
     ../src/app/simulation_app.cpp
     ../src/app/matching_engine.cpp
+    ../src/market/mock_md_adapter.cpp
 )
 target_include_directories(fix_engine_test PUBLIC ../include)
 
@@ -47,6 +48,7 @@ add_executable(unit_tests
     unit/test_thread_pool.cpp
     unit/test_session.cpp
     unit/test_application.cpp
+    unit/test_md_adapter.cpp
 )
 
 target_link_libraries(unit_tests PRIVATE fix_engine_test)
