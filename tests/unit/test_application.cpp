@@ -6,6 +6,7 @@
 #include "fix/fix_messages.hpp"
 #include "app/simulation_app.hpp"
 #include "app/matching_engine.hpp"
+#include "app/order.hpp"
 
 using namespace fix40;
 
@@ -320,12 +321,27 @@ TEST_CASE("MatchingEngine basic operations", "[application][engine]") {
         engine.start();
         
         SessionID sid("CLIENT", "SERVER");
-        FixMessage msg;
-        msg.set(tags::MsgType, "D");
+        
+        // 创建测试订单
+        Order order;
+        order.clOrdID = "ORDER001";
+        order.symbol = "AAPL";
+        order.side = OrderSide::BUY;
+        order.orderQty = 100;
+        order.price = 150.50;
+        order.ordType = OrderType::LIMIT;
+        order.sessionID = sid;
+        
+        // 创建撤单请求
+        CancelRequest cancelReq;
+        cancelReq.clOrdID = "CANCEL001";
+        cancelReq.origClOrdID = "ORDER001";
+        cancelReq.symbol = "AAPL";
+        cancelReq.sessionID = sid;
         
         // 提交事件不应该阻塞
-        REQUIRE_NOTHROW(engine.submit(OrderEvent{OrderEventType::NEW_ORDER, sid, msg}));
-        REQUIRE_NOTHROW(engine.submit(OrderEvent{OrderEventType::CANCEL_REQUEST, sid, msg}));
+        REQUIRE_NOTHROW(engine.submit(OrderEvent::newOrder(order)));
+        REQUIRE_NOTHROW(engine.submit(OrderEvent::cancelRequest(cancelReq)));
         REQUIRE_NOTHROW(engine.submit(OrderEvent{OrderEventType::SESSION_LOGON, sid}));
         REQUIRE_NOTHROW(engine.submit(OrderEvent{OrderEventType::SESSION_LOGOUT, sid}));
         
