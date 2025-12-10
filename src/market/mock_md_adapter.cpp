@@ -11,18 +11,32 @@
 
 namespace fix40 {
 
+namespace {
+// 线程安全的 localtime 封装
+std::tm safe_localtime(std::time_t time) {
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &time);
+#else
+    localtime_r(&time, &tm);
+#endif
+    return tm;
+}
+} // anonymous namespace
+
 MockMdAdapter::MockMdAdapter(moodycamel::BlockingConcurrentQueue<MarketData>& queue)
     : MdAdapter(queue)
     , rng_(std::random_device{}())
+    , tradingDay_([]() {
+        // 生成模拟交易日（当前日期）
+        auto now = std::chrono::system_clock::now();
+        auto time = std::chrono::system_clock::to_time_t(now);
+        std::tm tm = safe_localtime(time);
+        std::ostringstream oss;
+        oss << std::put_time(&tm, "%Y%m%d");
+        return oss.str();
+    }())
 {
-    // 生成模拟交易日（当前日期）
-    auto now = std::chrono::system_clock::now();
-    auto time = std::chrono::system_clock::to_time_t(now);
-    std::tm tm = *std::localtime(&time);
-    
-    std::ostringstream oss;
-    oss << std::put_time(&tm, "%Y%m%d");
-    tradingDay_ = oss.str();
 }
 
 MockMdAdapter::~MockMdAdapter() {
@@ -127,7 +141,7 @@ void MockMdAdapter::run() {
             pushMarketData(std::move(md));
         }
 
-        std::this_thread::sleep_for(tickInterval_);
+        std::this_thread::sleep_for(tickInterval_.load());
     }
 }
 
@@ -159,7 +173,8 @@ MarketData MockMdAdapter::generateTick(const std::string& instrument) {
     }
 
     // 生成随机价格变动
-    std::uniform_real_distribution<double> dist(-volatility_, volatility_);
+    const double vol = volatility_.load();
+    std::uniform_real_distribution<double> dist(-vol, vol);
     double change = dist(rng_);
     double newPrice = lastPrice * (1.0 + change);
     
@@ -241,7 +256,7 @@ void MockMdAdapter::notifyState(MdAdapterState state, const std::string& message
 std::string MockMdAdapter::getCurrentTime() const {
     auto now = std::chrono::system_clock::now();
     auto time = std::chrono::system_clock::to_time_t(now);
-    std::tm tm = *std::localtime(&time);
+    std::tm tm = safe_localtime(time);
     
     std::ostringstream oss;
     oss << std::put_time(&tm, "%H:%M:%S");

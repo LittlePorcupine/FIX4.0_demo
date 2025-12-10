@@ -36,10 +36,10 @@ constexpr size_t TIME_LEN = 9;
 
 /**
  * @struct MarketData
- * @brief 行情数据 POD 结构体
+ * @brief 行情数据结构体
  *
  * 设计原则：
- * - POD 类型，可安全地在无锁队列中传递
+ * - Trivially copyable 类型，可安全地在无锁队列中传递
  * - 使用固定长度字符数组，避免动态内存分配
  * - 字段命名清晰，与业务含义对应
  * - 与外部数据源（CTP 等）解耦
@@ -179,7 +179,7 @@ struct MarketData {
     }
 };
 
-// 静态断言确保 POD 特性
+// 静态断言确保 trivially copyable 特性（可安全用于无锁队列）
 static_assert(std::is_trivially_copyable<MarketData>::value, 
               "MarketData must be trivially copyable for lock-free queue");
 

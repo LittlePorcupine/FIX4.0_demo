@@ -4,10 +4,31 @@
  */
 
 #include "app/matching_engine.hpp"
-#include "fix/fix_tags.hpp"
 #include "base/logger.hpp"
 
 namespace fix40 {
+
+namespace {
+
+const char* sideToString(OrderSide side) {
+    return side == OrderSide::BUY ? "Buy" : "Sell";
+}
+
+const char* ordTypeToString(OrderType type) {
+    return type == OrderType::MARKET ? "Market" : "Limit";
+}
+
+const char* tifToString(TimeInForce tif) {
+    switch (tif) {
+        case TimeInForce::DAY: return "Day";
+        case TimeInForce::GTC: return "GTC";
+        case TimeInForce::IOC: return "IOC";
+        case TimeInForce::FOK: return "FOK";
+        default: return "Unknown";
+    }
+}
+
+} // anonymous namespace
 
 MatchingEngine::MatchingEngine() = default;
 
@@ -87,53 +108,40 @@ void MatchingEngine::process_event(const OrderEvent& event) {
 }
 
 void MatchingEngine::handle_new_order(const OrderEvent& event) {
-    const auto& msg = event.message;
+    const Order* order = event.getOrder();
+    if (!order) {
+        LOG() << "[MatchingEngine] Invalid NEW_ORDER event: no order data";
+        return;
+    }
     
     LOG() << "[MatchingEngine] Processing NewOrderSingle from " << event.sessionID.to_string();
-    
-    // 提取订单字段
-    if (msg.has(11)) {
-        LOG() << "  ClOrdID: " << msg.get_string(11);
-    }
-    if (msg.has(55)) {
-        LOG() << "  Symbol: " << msg.get_string(55);
-    }
-    if (msg.has(54)) {
-        std::string side = msg.get_string(54);
-        LOG() << "  Side: " << (side == "1" ? "Buy" : (side == "2" ? "Sell" : side));
-    }
-    if (msg.has(38)) {
-        LOG() << "  OrderQty: " << msg.get_string(38);
-    }
-    if (msg.has(44)) {
-        LOG() << "  Price: " << msg.get_string(44);
-    }
-    if (msg.has(40)) {
-        std::string ord_type = msg.get_string(40);
-        LOG() << "  OrdType: " << (ord_type == "1" ? "Market" : (ord_type == "2" ? "Limit" : ord_type));
-    }
+    LOG() << "  ClOrdID: " << order->clOrdID;
+    LOG() << "  Symbol: " << order->symbol;
+    LOG() << "  Side: " << sideToString(order->side);
+    LOG() << "  OrderQty: " << order->orderQty;
+    LOG() << "  Price: " << order->price;
+    LOG() << "  OrdType: " << ordTypeToString(order->ordType);
+    LOG() << "  TimeInForce: " << tifToString(order->timeInForce);
     
     // TODO: 实现实际的撮合逻辑
-    // 1. 验证订单参数
-    // 2. 风控检查
-    // 3. 订单簿匹配
-    // 4. 生成 ExecutionReport 并发送回客户端
+    // 1. 生成 OrderID
+    // 2. 验证订单参数
+    // 3. 风控检查
+    // 4. 订单簿匹配
+    // 5. 生成 ExecutionReport 并发送回客户端
 }
 
 void MatchingEngine::handle_cancel_request(const OrderEvent& event) {
-    const auto& msg = event.message;
+    const CancelRequest* req = event.getCancelRequest();
+    if (!req) {
+        LOG() << "[MatchingEngine] Invalid CANCEL_REQUEST event: no request data";
+        return;
+    }
     
     LOG() << "[MatchingEngine] Processing OrderCancelRequest from " << event.sessionID.to_string();
-    
-    if (msg.has(41)) {
-        LOG() << "  OrigClOrdID: " << msg.get_string(41);
-    }
-    if (msg.has(11)) {
-        LOG() << "  ClOrdID: " << msg.get_string(11);
-    }
-    if (msg.has(55)) {
-        LOG() << "  Symbol: " << msg.get_string(55);
-    }
+    LOG() << "  ClOrdID: " << req->clOrdID;
+    LOG() << "  OrigClOrdID: " << req->origClOrdID;
+    LOG() << "  Symbol: " << req->symbol;
     
     // TODO: 实现实际的撤单逻辑
     // 1. 查找原订单

@@ -82,9 +82,10 @@ public:
     /**
      * @brief 设置行情生成间隔
      * @param interval 间隔时间
+     * @note 应在 start() 之前调用，运行时修改行为未定义
      */
     void setTickInterval(std::chrono::milliseconds interval) {
-        tickInterval_ = interval;
+        tickInterval_.store(interval);
     }
 
     /**
@@ -100,9 +101,10 @@ public:
     /**
      * @brief 设置价格波动幅度（百分比）
      * @param volatility 波动幅度，如 0.01 表示 1%
+     * @note 应在 start() 之前调用，运行时修改行为未定义
      */
     void setVolatility(double volatility) {
-        volatility_ = volatility;
+        volatility_.store(volatility);
     }
 
 private:
@@ -141,11 +143,11 @@ private:
     std::map<std::string, double> lastPrices_;
 
     StateCallback stateCallback_;
-    std::chrono::milliseconds tickInterval_{1000};  // 默认 1 秒
-    double volatility_{0.005};  // 默认 0.5% 波动
+    std::atomic<std::chrono::milliseconds> tickInterval_{std::chrono::milliseconds{1000}};
+    std::atomic<double> volatility_{0.005};  // 默认 0.5% 波动
 
-    std::mt19937 rng_;
-    std::string tradingDay_;
+    std::mt19937 rng_;                       ///< 随机数生成器（仅工作线程访问）
+    const std::string tradingDay_;           ///< 交易日（构造后不变）
 };
 
 } // namespace fix40
