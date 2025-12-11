@@ -4,10 +4,11 @@
 using namespace fix40;
 
 // 辅助函数：创建测试订单
-Order createOrder(const std::string& clOrdID, OrderSide side, double price, int64_t qty) {
+Order createOrder(const std::string& clOrdID, OrderSide side, double price, int64_t qty, 
+                  const std::string& symbol = "TEST") {
     Order order;
     order.clOrdID = clOrdID;
-    order.symbol = "TEST";
+    order.symbol = symbol;
     order.side = side;
     order.ordType = OrderType::LIMIT;
     order.price = price;
@@ -297,12 +298,65 @@ TEST_CASE("OrderBook - Average price calculation", "[order_book]") {
 TEST_CASE("OrderBook - Order ID generation", "[order_book]") {
     OrderBook book("IF2401");
     
-    Order order1 = createOrder("O1", OrderSide::BUY, 100.0, 10);
-    Order order2 = createOrder("O2", OrderSide::BUY, 100.0, 10);
+    Order order1 = createOrder("O1", OrderSide::BUY, 100.0, 10, "IF2401");
+    Order order2 = createOrder("O2", OrderSide::BUY, 100.0, 10, "IF2401");
     
     book.addOrder(order1);
     book.addOrder(order2);
     
     REQUIRE(order1.orderID != order2.orderID);
     REQUIRE(order1.orderID.find("IF2401") != std::string::npos);
+}
+
+TEST_CASE("OrderBook - Input validation", "[order_book]") {
+    OrderBook book("TEST");
+    
+    SECTION("Reject negative quantity") {
+        Order order = createOrder("O1", OrderSide::BUY, 100.0, -10);
+        auto trades = book.addOrder(order);
+        
+        REQUIRE(trades.empty());
+        REQUIRE(order.status == OrderStatus::REJECTED);
+        REQUIRE(book.empty());
+    }
+    
+    SECTION("Reject zero quantity") {
+        Order order = createOrder("O1", OrderSide::BUY, 100.0, 0);
+        auto trades = book.addOrder(order);
+        
+        REQUIRE(trades.empty());
+        REQUIRE(order.status == OrderStatus::REJECTED);
+    }
+    
+    SECTION("Reject negative price for limit order") {
+        Order order = createOrder("O1", OrderSide::BUY, -100.0, 10);
+        auto trades = book.addOrder(order);
+        
+        REQUIRE(trades.empty());
+        REQUIRE(order.status == OrderStatus::REJECTED);
+    }
+    
+    SECTION("Reject zero price for limit order") {
+        Order order = createOrder("O1", OrderSide::BUY, 0.0, 10);
+        auto trades = book.addOrder(order);
+        
+        REQUIRE(trades.empty());
+        REQUIRE(order.status == OrderStatus::REJECTED);
+    }
+    
+    SECTION("Reject symbol mismatch") {
+        Order order = createOrder("O1", OrderSide::BUY, 100.0, 10, "OTHER");
+        auto trades = book.addOrder(order);
+        
+        REQUIRE(trades.empty());
+        REQUIRE(order.status == OrderStatus::REJECTED);
+    }
+    
+    SECTION("Reject empty clOrdID") {
+        Order order = createOrder("", OrderSide::BUY, 100.0, 10);
+        auto trades = book.addOrder(order);
+        
+        REQUIRE(trades.empty());
+        REQUIRE(order.status == OrderStatus::REJECTED);
+    }
 }

@@ -20,19 +20,46 @@ namespace fix40 {
 /**
  * @struct Trade
  * @brief 成交记录
+ * 
+ * 保存完整的成交信息，包括双方订单的快照，
+ * 用于生成完整的 ExecutionReport。
  */
 struct Trade {
     std::string tradeID;           ///< 成交ID
-    std::string buyOrderID;        ///< 买方订单ID
-    std::string sellOrderID;       ///< 卖方订单ID
-    std::string buyClOrdID;        ///< 买方客户订单ID
-    std::string sellClOrdID;       ///< 卖方客户订单ID
     std::string symbol;            ///< 合约代码
     double price;                  ///< 成交价格
     int64_t qty;                   ///< 成交数量
     std::chrono::system_clock::time_point timestamp;  ///< 成交时间
 
-    Trade() : price(0.0), qty(0) {}
+    // 买方信息
+    std::string buyOrderID;        ///< 买方订单ID
+    std::string buyClOrdID;        ///< 买方客户订单ID
+    int64_t buyOrderQty;           ///< 买方原始订单数量
+    double buyPrice;               ///< 买方订单价格
+    OrderType buyOrdType;          ///< 买方订单类型
+    int64_t buyCumQty;             ///< 买方成交后累计数量
+    int64_t buyLeavesQty;          ///< 买方成交后剩余数量
+    double buyAvgPx;               ///< 买方成交后平均价
+    OrderStatus buyStatus;         ///< 买方成交后状态
+
+    // 卖方信息
+    std::string sellOrderID;       ///< 卖方订单ID
+    std::string sellClOrdID;       ///< 卖方客户订单ID
+    int64_t sellOrderQty;          ///< 卖方原始订单数量
+    double sellPrice;              ///< 卖方订单价格
+    OrderType sellOrdType;         ///< 卖方订单类型
+    int64_t sellCumQty;            ///< 卖方成交后累计数量
+    int64_t sellLeavesQty;         ///< 卖方成交后剩余数量
+    double sellAvgPx;              ///< 卖方成交后平均价
+    OrderStatus sellStatus;        ///< 卖方成交后状态
+
+    Trade() 
+        : price(0.0), qty(0)
+        , buyOrderQty(0), buyPrice(0.0), buyOrdType(OrderType::LIMIT)
+        , buyCumQty(0), buyLeavesQty(0), buyAvgPx(0.0), buyStatus(OrderStatus::NEW)
+        , sellOrderQty(0), sellPrice(0.0), sellOrdType(OrderType::LIMIT)
+        , sellCumQty(0), sellLeavesQty(0), sellAvgPx(0.0), sellStatus(OrderStatus::NEW)
+    {}
 };
 
 /**
