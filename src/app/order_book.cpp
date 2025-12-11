@@ -28,6 +28,33 @@ std::string OrderBook::generateTradeID() {
 }
 
 std::vector<Trade> OrderBook::addOrder(Order& order) {
+    // 输入校验
+    if (order.orderQty <= 0) {
+        LOG() << "[OrderBook:" << symbol_ << "] Rejected: invalid orderQty " << order.orderQty;
+        order.status = OrderStatus::REJECTED;
+        return {};
+    }
+    if (order.leavesQty <= 0) {
+        LOG() << "[OrderBook:" << symbol_ << "] Rejected: invalid leavesQty " << order.leavesQty;
+        order.status = OrderStatus::REJECTED;
+        return {};
+    }
+    if (order.ordType == OrderType::LIMIT && order.price <= 0) {
+        LOG() << "[OrderBook:" << symbol_ << "] Rejected: invalid price " << order.price << " for limit order";
+        order.status = OrderStatus::REJECTED;
+        return {};
+    }
+    if (order.symbol != symbol_) {
+        LOG() << "[OrderBook:" << symbol_ << "] Rejected: symbol mismatch " << order.symbol;
+        order.status = OrderStatus::REJECTED;
+        return {};
+    }
+    if (order.clOrdID.empty()) {
+        LOG() << "[OrderBook:" << symbol_ << "] Rejected: empty clOrdID";
+        order.status = OrderStatus::REJECTED;
+        return {};
+    }
+    
     // 生成订单ID
     order.orderID = generateOrderID();
     order.updateTime = std::chrono::system_clock::now();
@@ -86,29 +113,13 @@ std::vector<Trade> OrderBook::matchBuyOrder(Order& buyOrder) {
             int64_t matchQty = std::min(buyOrder.leavesQty, sellOrder.leavesQty);
             double matchPrice = sellOrder.price;  // 成交价取被动方价格
             
-            // 创建成交记录
-            Trade trade;
-            trade.tradeID = generateTradeID();
-            trade.buyOrderID = buyOrder.orderID;
-            trade.sellOrderID = sellOrder.orderID;
-            trade.buyClOrdID = buyOrder.clOrdID;
-            trade.sellClOrdID = sellOrder.clOrdID;
-            trade.symbol = symbol_;
-            trade.price = matchPrice;
-            trade.qty = matchQty;
-            trade.timestamp = std::chrono::system_clock::now();
-            trades.push_back(trade);
-            
-            LOG() << "[OrderBook:" << symbol_ << "] Trade: " << trade.tradeID
-                  << " " << matchQty << " @ " << matchPrice
-                  << " (Buy:" << buyOrder.clOrdID << " Sell:" << sellOrder.clOrdID << ")";
-
             // 更新买单
             buyOrder.cumQty += matchQty;
             buyOrder.leavesQty -= matchQty;
             buyOrder.avgPx = (buyOrder.avgPx * (buyOrder.cumQty - matchQty) + matchPrice * matchQty) 
                            / buyOrder.cumQty;
-            buyOrder.updateTime = trade.timestamp;
+            auto now = std::chrono::system_clock::now();
+            buyOrder.updateTime = now;
             
             if (buyOrder.leavesQty == 0) {
                 buyOrder.status = OrderStatus::FILLED;
@@ -121,16 +132,56 @@ std::vector<Trade> OrderBook::matchBuyOrder(Order& buyOrder) {
             sellOrder.leavesQty -= matchQty;
             sellOrder.avgPx = (sellOrder.avgPx * (sellOrder.cumQty - matchQty) + matchPrice * matchQty)
                             / sellOrder.cumQty;
-            sellOrder.updateTime = trade.timestamp;
+            sellOrder.updateTime = now;
             
             if (sellOrder.leavesQty == 0) {
                 sellOrder.status = OrderStatus::FILLED;
+            } else {
+                sellOrder.status = OrderStatus::PARTIALLY_FILLED;
+            }
+
+            // 创建成交记录（包含完整的双方订单快照）
+            Trade trade;
+            trade.tradeID = generateTradeID();
+            trade.symbol = symbol_;
+            trade.price = matchPrice;
+            trade.qty = matchQty;
+            trade.timestamp = now;
+            
+            // 买方信息
+            trade.buyOrderID = buyOrder.orderID;
+            trade.buyClOrdID = buyOrder.clOrdID;
+            trade.buyOrderQty = buyOrder.orderQty;
+            trade.buyPrice = buyOrder.price;
+            trade.buyOrdType = buyOrder.ordType;
+            trade.buyCumQty = buyOrder.cumQty;
+            trade.buyLeavesQty = buyOrder.leavesQty;
+            trade.buyAvgPx = buyOrder.avgPx;
+            trade.buyStatus = buyOrder.status;
+            
+            // 卖方信息
+            trade.sellOrderID = sellOrder.orderID;
+            trade.sellClOrdID = sellOrder.clOrdID;
+            trade.sellOrderQty = sellOrder.orderQty;
+            trade.sellPrice = sellOrder.price;
+            trade.sellOrdType = sellOrder.ordType;
+            trade.sellCumQty = sellOrder.cumQty;
+            trade.sellLeavesQty = sellOrder.leavesQty;
+            trade.sellAvgPx = sellOrder.avgPx;
+            trade.sellStatus = sellOrder.status;
+            
+            trades.push_back(trade);
+            
+            LOG() << "[OrderBook:" << symbol_ << "] Trade: " << trade.tradeID
+                  << " " << matchQty << " @ " << matchPrice
+                  << " (Buy:" << buyOrder.clOrdID << " Sell:" << sellOrder.clOrdID << ")";
+            
+            if (sellOrder.leavesQty == 0) {
                 // 从索引中移除
                 orderIndex_.erase(sellOrder.clOrdID);
                 orderIt = level.orders.erase(orderIt);
                 askOrderCount_--;
             } else {
-                sellOrder.status = OrderStatus::PARTIALLY_FILLED;
                 ++orderIt;
             }
             
@@ -171,29 +222,13 @@ std::vector<Trade> OrderBook::matchSellOrder(Order& sellOrder) {
             int64_t matchQty = std::min(sellOrder.leavesQty, buyOrder.leavesQty);
             double matchPrice = buyOrder.price;  // 成交价取被动方价格
             
-            // 创建成交记录
-            Trade trade;
-            trade.tradeID = generateTradeID();
-            trade.buyOrderID = buyOrder.orderID;
-            trade.sellOrderID = sellOrder.orderID;
-            trade.buyClOrdID = buyOrder.clOrdID;
-            trade.sellClOrdID = sellOrder.clOrdID;
-            trade.symbol = symbol_;
-            trade.price = matchPrice;
-            trade.qty = matchQty;
-            trade.timestamp = std::chrono::system_clock::now();
-            trades.push_back(trade);
-            
-            LOG() << "[OrderBook:" << symbol_ << "] Trade: " << trade.tradeID
-                  << " " << matchQty << " @ " << matchPrice
-                  << " (Buy:" << buyOrder.clOrdID << " Sell:" << sellOrder.clOrdID << ")";
-
             // 更新卖单
             sellOrder.cumQty += matchQty;
             sellOrder.leavesQty -= matchQty;
             sellOrder.avgPx = (sellOrder.avgPx * (sellOrder.cumQty - matchQty) + matchPrice * matchQty)
                             / sellOrder.cumQty;
-            sellOrder.updateTime = trade.timestamp;
+            auto now = std::chrono::system_clock::now();
+            sellOrder.updateTime = now;
             
             if (sellOrder.leavesQty == 0) {
                 sellOrder.status = OrderStatus::FILLED;
@@ -206,16 +241,56 @@ std::vector<Trade> OrderBook::matchSellOrder(Order& sellOrder) {
             buyOrder.leavesQty -= matchQty;
             buyOrder.avgPx = (buyOrder.avgPx * (buyOrder.cumQty - matchQty) + matchPrice * matchQty)
                            / buyOrder.cumQty;
-            buyOrder.updateTime = trade.timestamp;
+            buyOrder.updateTime = now;
             
             if (buyOrder.leavesQty == 0) {
                 buyOrder.status = OrderStatus::FILLED;
+            } else {
+                buyOrder.status = OrderStatus::PARTIALLY_FILLED;
+            }
+
+            // 创建成交记录（包含完整的双方订单快照）
+            Trade trade;
+            trade.tradeID = generateTradeID();
+            trade.symbol = symbol_;
+            trade.price = matchPrice;
+            trade.qty = matchQty;
+            trade.timestamp = now;
+            
+            // 买方信息
+            trade.buyOrderID = buyOrder.orderID;
+            trade.buyClOrdID = buyOrder.clOrdID;
+            trade.buyOrderQty = buyOrder.orderQty;
+            trade.buyPrice = buyOrder.price;
+            trade.buyOrdType = buyOrder.ordType;
+            trade.buyCumQty = buyOrder.cumQty;
+            trade.buyLeavesQty = buyOrder.leavesQty;
+            trade.buyAvgPx = buyOrder.avgPx;
+            trade.buyStatus = buyOrder.status;
+            
+            // 卖方信息
+            trade.sellOrderID = sellOrder.orderID;
+            trade.sellClOrdID = sellOrder.clOrdID;
+            trade.sellOrderQty = sellOrder.orderQty;
+            trade.sellPrice = sellOrder.price;
+            trade.sellOrdType = sellOrder.ordType;
+            trade.sellCumQty = sellOrder.cumQty;
+            trade.sellLeavesQty = sellOrder.leavesQty;
+            trade.sellAvgPx = sellOrder.avgPx;
+            trade.sellStatus = sellOrder.status;
+            
+            trades.push_back(trade);
+            
+            LOG() << "[OrderBook:" << symbol_ << "] Trade: " << trade.tradeID
+                  << " " << matchQty << " @ " << matchPrice
+                  << " (Buy:" << buyOrder.clOrdID << " Sell:" << sellOrder.clOrdID << ")";
+            
+            if (buyOrder.leavesQty == 0) {
                 // 从索引中移除
                 orderIndex_.erase(buyOrder.clOrdID);
                 orderIt = level.orders.erase(orderIt);
                 bidOrderCount_--;
             } else {
-                buyOrder.status = OrderStatus::PARTIALLY_FILLED;
                 ++orderIt;
             }
             

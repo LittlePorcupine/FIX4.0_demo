@@ -4,6 +4,7 @@
  */
 
 #include "app/simulation_app.hpp"
+#include "app/fix_message_builder.hpp"
 #include "fix/fix_tags.hpp"
 #include "base/logger.hpp"
 #include <cstdlib>
@@ -155,7 +156,13 @@ CancelRequest parseCancelRequest(const FixMessage& msg, const SessionID& session
 // SimulationApp 实现
 // ============================================================================
 
-SimulationApp::SimulationApp() = default;
+SimulationApp::SimulationApp() {
+    // 设置 ExecutionReport 回调
+    engine_.setExecutionReportCallback(
+        [this](const SessionID& sid, const ExecutionReport& rpt) {
+            onExecutionReport(sid, rpt);
+        });
+}
 
 SimulationApp::~SimulationApp() {
     stop();
@@ -208,6 +215,21 @@ void SimulationApp::toApp(FixMessage& msg, const SessionID& sessionID) {
     const std::string msgType = msg.get_string(tags::MsgType);
     LOG() << "[SimulationApp] Sending business message: MsgType=" << msgType
           << " via " << sessionID.to_string();
+}
+
+void SimulationApp::onExecutionReport(const SessionID& sessionID, const ExecutionReport& report) {
+    LOG() << "[SimulationApp] Sending ExecutionReport to " << sessionID.to_string()
+          << " ClOrdID=" << report.clOrdID
+          << " OrdStatus=" << static_cast<int>(report.ordStatus);
+    
+    // 将 ExecutionReport 转换为 FIX 消息
+    FixMessage msg = buildExecutionReport(report);
+    
+    // 通过 SessionManager 发送
+    if (!sessionManager_.sendMessage(sessionID, msg)) {
+        LOG() << "[SimulationApp] Failed to send ExecutionReport: session not found "
+              << sessionID.to_string();
+    }
 }
 
 } // namespace fix40

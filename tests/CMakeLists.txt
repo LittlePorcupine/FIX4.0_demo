@@ -24,6 +24,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 # 创建测试库（复用主项目的源文件）
 add_library(fix_engine_test STATIC
     ../src/fix/session.cpp
+    ../src/fix/session_manager.cpp
     ../src/core/connection.cpp
     ../src/fix/fix_frame_decoder.cpp
     ../src/base/config.cpp
@@ -51,6 +52,7 @@ add_executable(unit_tests
     unit/test_application.cpp
     unit/test_md_adapter.cpp
     unit/test_order_book.cpp
+    unit/test_session_manager.cpp
 )
 
 target_link_libraries(unit_tests PRIVATE fix_engine_test)

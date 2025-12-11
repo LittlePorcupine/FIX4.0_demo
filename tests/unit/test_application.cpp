@@ -7,6 +7,7 @@
 #include "app/simulation_app.hpp"
 #include "app/matching_engine.hpp"
 #include "app/order.hpp"
+#include <condition_variable>
 
 using namespace fix40;
 
@@ -345,9 +346,7 @@ TEST_CASE("MatchingEngine basic operations", "[application][engine]") {
         REQUIRE_NOTHROW(engine.submit(OrderEvent{OrderEventType::SESSION_LOGON, sid}));
         REQUIRE_NOTHROW(engine.submit(OrderEvent{OrderEventType::SESSION_LOGOUT, sid}));
         
-        // 给引擎一点时间处理
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        
+        // stop() 会等待队列处理完成
         engine.stop();
     }
 }
@@ -403,9 +402,7 @@ TEST_CASE("SimulationApp basic functionality", "[application][simulation]") {
         REQUIRE_NOTHROW(app.toApp(msg, sid));
     }
     
-    // 给引擎时间处理队列中的事件
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    
+    // stop() 会等待队列处理完成
     app.stop();
 }
 
@@ -431,16 +428,31 @@ TEST_CASE("Server session with Application - onLogon called", "[application][ser
     REQUIRE(app.last_session_id.targetCompID == "CLIENT");
 }
 
+// 辅助函数：轮询等待条件满足，避免 flaky tests
+template<typename Predicate>
+bool waitFor(Predicate pred, std::chrono::milliseconds timeout = std::chrono::milliseconds(1000)) {
+    auto start = std::chrono::steady_clock::now();
+    while (!pred()) {
+        if (std::chrono::steady_clock::now() - start > timeout) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return true;
+}
+
 TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][orderbook]") {
     MatchingEngine engine;
     
     // 收集 ExecutionReport
     std::vector<std::pair<SessionID, ExecutionReport>> reports;
     std::mutex reportsMutex;
+    std::condition_variable reportsCv;
     
     engine.setExecutionReportCallback([&](const SessionID& sid, const ExecutionReport& rpt) {
         std::lock_guard<std::mutex> lock(reportsMutex);
         reports.push_back({sid, rpt});
+        reportsCv.notify_all();
     });
     
     engine.start();
@@ -460,7 +472,11 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
         
         engine.submit(OrderEvent::newOrder(order));
         
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // 轮询等待报告到达
+        REQUIRE(waitFor([&]() {
+            std::lock_guard<std::mutex> lock(reportsMutex);
+            return reports.size() >= 1;
+        }));
         
         std::lock_guard<std::mutex> lock(reportsMutex);
         REQUIRE(reports.size() == 1);
@@ -488,7 +504,12 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
         sellOrder.sessionID = sid;
         
         engine.submit(OrderEvent::newOrder(sellOrder));
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        
+        // 等待卖单确认
+        REQUIRE(waitFor([&]() {
+            std::lock_guard<std::mutex> lock(reportsMutex);
+            return reports.size() >= 1;
+        }));
         
         // 再挂买单，应该成交
         Order buyOrder;
@@ -502,7 +523,12 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
         buyOrder.sessionID = sid;
         
         engine.submit(OrderEvent::newOrder(buyOrder));
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        // 等待所有报告（卖单确认 + 买单成交 + 卖单成交通知）
+        REQUIRE(waitFor([&]() {
+            std::lock_guard<std::mutex> lock(reportsMutex);
+            return reports.size() >= 3;
+        }));
         
         std::lock_guard<std::mutex> lock(reportsMutex);
         // 应该有：卖单确认 + 买单成交 + 卖单成交通知
@@ -534,7 +560,12 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
         order.sessionID = sid;
         
         engine.submit(OrderEvent::newOrder(order));
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        
+        // 等待订单确认
+        REQUIRE(waitFor([&]() {
+            std::lock_guard<std::mutex> lock(reportsMutex);
+            return reports.size() >= 1;
+        }));
         
         // 撤单
         CancelRequest cancel;
@@ -544,7 +575,12 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
         cancel.sessionID = sid;
         
         engine.submit(OrderEvent::cancelRequest(cancel));
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        // 等待撤单确认
+        REQUIRE(waitFor([&]() {
+            std::lock_guard<std::mutex> lock(reportsMutex);
+            return reports.size() >= 2;
+        }));
         
         std::lock_guard<std::mutex> lock(reportsMutex);
         // 应该有：订单确认 + 撤单确认

@@ -183,15 +183,12 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
     
     // 为每笔成交发送对手方的 ExecutionReport
     for (const auto& trade : trades) {
-        // 确定对手方
-        const std::string& counterClOrdID = 
-            (trade.buyClOrdID == order.clOrdID) ? trade.sellClOrdID : trade.buyClOrdID;
+        // 确定对手方信息（从 Trade 中获取完整快照）
+        bool isBuyer = (trade.buyClOrdID == order.clOrdID);
+        const std::string& counterClOrdID = isBuyer ? trade.sellClOrdID : trade.buyClOrdID;
         
         auto it = orderSessionMap_.find(counterClOrdID);
         if (it != orderSessionMap_.end()) {
-            // 查找对手方订单状态
-            const Order* counterOrder = book.findOrder(counterClOrdID);
-            
             ExecutionReport counterReport;
             counterReport.execID = generateExecID();
             counterReport.clOrdID = counterClOrdID;
@@ -201,31 +198,35 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
             counterReport.transactTime = trade.timestamp;
             counterReport.execTransType = ExecTransType::NEW;
             
-            if (counterOrder) {
-                // 订单还在簿上（部分成交）
-                counterReport.orderID = counterOrder->orderID;
-                counterReport.side = counterOrder->side;
-                counterReport.orderQty = counterOrder->orderQty;
-                counterReport.price = counterOrder->price;
-                counterReport.ordType = counterOrder->ordType;
-                counterReport.ordStatus = counterOrder->status;
-                counterReport.cumQty = counterOrder->cumQty;
-                counterReport.avgPx = counterOrder->avgPx;
-                counterReport.leavesQty = counterOrder->leavesQty;
+            // 从 Trade 快照中获取完整的对手方订单信息
+            if (isBuyer) {
+                // 对手方是卖方
+                counterReport.orderID = trade.sellOrderID;
+                counterReport.side = OrderSide::SELL;
+                counterReport.orderQty = trade.sellOrderQty;
+                counterReport.price = trade.sellPrice;
+                counterReport.ordType = trade.sellOrdType;
+                counterReport.ordStatus = trade.sellStatus;
+                counterReport.cumQty = trade.sellCumQty;
+                counterReport.avgPx = trade.sellAvgPx;
+                counterReport.leavesQty = trade.sellLeavesQty;
             } else {
-                // 订单已完全成交（从簿上移除）
-                counterReport.orderID = (trade.buyClOrdID == order.clOrdID) 
-                    ? trade.sellOrderID : trade.buyOrderID;
-                counterReport.side = (trade.buyClOrdID == order.clOrdID) 
-                    ? OrderSide::SELL : OrderSide::BUY;
-                counterReport.ordStatus = OrderStatus::FILLED;
-                // 其他字段需要从历史记录获取，这里简化处理
+                // 对手方是买方
+                counterReport.orderID = trade.buyOrderID;
+                counterReport.side = OrderSide::BUY;
+                counterReport.orderQty = trade.buyOrderQty;
+                counterReport.price = trade.buyPrice;
+                counterReport.ordType = trade.buyOrdType;
+                counterReport.ordStatus = trade.buyStatus;
+                counterReport.cumQty = trade.buyCumQty;
+                counterReport.avgPx = trade.buyAvgPx;
+                counterReport.leavesQty = trade.buyLeavesQty;
             }
             
             sendExecutionReport(it->second, counterReport);
             
             // 如果对手方订单已完全成交，清理映射
-            if (!counterOrder) {
+            if (counterReport.ordStatus == OrderStatus::FILLED) {
                 orderSessionMap_.erase(counterClOrdID);
             }
         }

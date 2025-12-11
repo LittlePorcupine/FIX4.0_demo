@@ -10,6 +10,7 @@
 #pragma once
 
 #include "fix/application.hpp"
+#include "fix/session_manager.hpp"
 #include "app/matching_engine.hpp"
 
 namespace fix40 {
@@ -110,8 +111,26 @@ public:
      */
     void toApp(FixMessage& msg, const SessionID& sessionID) override;
 
+    /**
+     * @brief 获取会话管理器
+     * @return SessionManager& 会话管理器引用
+     *
+     * 用于注册/注销会话。
+     */
+    SessionManager& getSessionManager() { return sessionManager_; }
+
 private:
-    MatchingEngine engine_;  ///< 撮合引擎
+    /**
+     * @brief ExecutionReport 回调处理
+     * @param sessionID 目标会话
+     * @param report 执行报告
+     *
+     * 将 ExecutionReport 转换为 FIX 消息并发送到客户端。
+     */
+    void onExecutionReport(const SessionID& sessionID, const ExecutionReport& report);
+
+    MatchingEngine engine_;           ///< 撮合引擎
+    SessionManager sessionManager_;   ///< 会话管理器
 };
 
 } // namespace fix40
