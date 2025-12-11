@@ -360,3 +360,168 @@ TEST_CASE("OrderBook - Input validation", "[order_book]") {
         REQUIRE(order.status == OrderStatus::REJECTED);
     }
 }
+
+
+// ============================================================================
+// 市价单测试
+// ============================================================================
+
+// 辅助函数：创建市价单
+Order createMarketOrder(const std::string& clOrdID, OrderSide side, int64_t qty,
+                        const std::string& symbol = "TEST") {
+    Order order;
+    order.clOrdID = clOrdID;
+    order.symbol = symbol;
+    order.side = side;
+    order.ordType = OrderType::MARKET;
+    order.price = 0.0;  // 市价单不需要价格
+    order.orderQty = qty;
+    order.leavesQty = qty;
+    order.status = OrderStatus::PENDING_NEW;
+    return order;
+}
+
+TEST_CASE("OrderBook - Market order full match", "[order_book][market]") {
+    OrderBook book("TEST");
+    
+    // 先挂限价卖单
+    Order sellOrder = createOrder("SELL001", OrderSide::SELL, 100.0, 10);
+    book.addOrder(sellOrder);
+    
+    // 市价买单应该直接成交
+    Order buyOrder = createMarketOrder("BUY001", OrderSide::BUY, 10);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.size() == 1);
+    REQUIRE(trades[0].qty == 10);
+    REQUIRE(trades[0].price == 100.0);  // 成交价取对手盘价格
+    REQUIRE(buyOrder.status == OrderStatus::FILLED);
+    REQUIRE(buyOrder.cumQty == 10);
+    REQUIRE(book.empty());
+}
+
+TEST_CASE("OrderBook - Market sell order full match", "[order_book][market]") {
+    OrderBook book("TEST");
+    
+    // 先挂限价买单
+    Order buyOrder = createOrder("BUY001", OrderSide::BUY, 100.0, 10);
+    book.addOrder(buyOrder);
+    
+    // 市价卖单应该直接成交
+    Order sellOrder = createMarketOrder("SELL001", OrderSide::SELL, 10);
+    auto trades = book.addOrder(sellOrder);
+    
+    REQUIRE(trades.size() == 1);
+    REQUIRE(trades[0].qty == 10);
+    REQUIRE(trades[0].price == 100.0);
+    REQUIRE(sellOrder.status == OrderStatus::FILLED);
+    REQUIRE(book.empty());
+}
+
+TEST_CASE("OrderBook - Market order sweeps multiple price levels", "[order_book][market]") {
+    OrderBook book("TEST");
+    
+    // 挂多个价位的卖单
+    Order sell1 = createOrder("SELL001", OrderSide::SELL, 100.0, 5);
+    Order sell2 = createOrder("SELL002", OrderSide::SELL, 101.0, 5);
+    Order sell3 = createOrder("SELL003", OrderSide::SELL, 102.0, 5);
+    book.addOrder(sell1);
+    book.addOrder(sell2);
+    book.addOrder(sell3);
+    
+    // 市价买单扫所有价位
+    Order buyOrder = createMarketOrder("BUY001", OrderSide::BUY, 15);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.size() == 3);
+    REQUIRE(trades[0].price == 100.0);
+    REQUIRE(trades[0].qty == 5);
+    REQUIRE(trades[1].price == 101.0);
+    REQUIRE(trades[1].qty == 5);
+    REQUIRE(trades[2].price == 102.0);
+    REQUIRE(trades[2].qty == 5);
+    
+    REQUIRE(buyOrder.status == OrderStatus::FILLED);
+    REQUIRE(buyOrder.cumQty == 15);
+    // 平均价 = (100*5 + 101*5 + 102*5) / 15 = 101
+    REQUIRE(buyOrder.avgPx == Approx(101.0));
+    REQUIRE(book.empty());
+}
+
+TEST_CASE("OrderBook - Market order partial fill then cancel", "[order_book][market]") {
+    OrderBook book("TEST");
+    
+    // 只挂 5 手卖单
+    Order sellOrder = createOrder("SELL001", OrderSide::SELL, 100.0, 5);
+    book.addOrder(sellOrder);
+    
+    // 市价买单 10 手，只能成交 5 手，剩余取消
+    Order buyOrder = createMarketOrder("BUY001", OrderSide::BUY, 10);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.size() == 1);
+    REQUIRE(trades[0].qty == 5);
+    REQUIRE(buyOrder.cumQty == 5);
+    REQUIRE(buyOrder.leavesQty == 5);
+    REQUIRE(buyOrder.status == OrderStatus::CANCELED);  // 剩余部分取消
+    REQUIRE(book.empty());  // 市价单不挂入订单簿
+}
+
+TEST_CASE("OrderBook - Market order rejected when no counterparty", "[order_book][market]") {
+    OrderBook book("TEST");
+    
+    // 空订单簿，市价买单应该被拒绝
+    Order buyOrder = createMarketOrder("BUY001", OrderSide::BUY, 10);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.empty());
+    REQUIRE(buyOrder.status == OrderStatus::REJECTED);
+    REQUIRE(book.empty());
+}
+
+TEST_CASE("OrderBook - Market sell order rejected when no bids", "[order_book][market]") {
+    OrderBook book("TEST");
+    
+    // 只有卖盘，没有买盘
+    Order sellLimit = createOrder("SELL001", OrderSide::SELL, 100.0, 10);
+    book.addOrder(sellLimit);
+    
+    // 市价卖单应该被拒绝（没有买盘）
+    Order sellMarket = createMarketOrder("SELL002", OrderSide::SELL, 10);
+    auto trades = book.addOrder(sellMarket);
+    
+    REQUIRE(trades.empty());
+    REQUIRE(sellMarket.status == OrderStatus::REJECTED);
+    REQUIRE(book.getAskOrderCount() == 1);  // 原卖单还在
+}
+
+TEST_CASE("OrderBook - Market order does not enter book", "[order_book][market]") {
+    OrderBook book("TEST");
+    
+    // 挂少量卖单
+    Order sellOrder = createOrder("SELL001", OrderSide::SELL, 100.0, 3);
+    book.addOrder(sellOrder);
+    
+    // 市价买单部分成交
+    Order buyOrder = createMarketOrder("BUY001", OrderSide::BUY, 10);
+    book.addOrder(buyOrder);
+    
+    // 市价单不应该挂入订单簿
+    REQUIRE(book.getBidOrderCount() == 0);
+    REQUIRE(book.findOrder("BUY001") == nullptr);
+}
+
+TEST_CASE("OrderBook - Market order price is 0 but still valid", "[order_book][market]") {
+    OrderBook book("TEST");
+    
+    Order sellOrder = createOrder("SELL001", OrderSide::SELL, 100.0, 10);
+    book.addOrder(sellOrder);
+    
+    // 市价单 price=0 是合法的
+    Order buyOrder = createMarketOrder("BUY001", OrderSide::BUY, 10);
+    REQUIRE(buyOrder.price == 0.0);
+    
+    auto trades = book.addOrder(buyOrder);
+    REQUIRE(trades.size() == 1);
+    REQUIRE(buyOrder.status == OrderStatus::FILLED);
+}

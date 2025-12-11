@@ -55,13 +55,25 @@ std::vector<Trade> OrderBook::addOrder(Order& order) {
         return {};
     }
     
+    // 市价单检查：必须有对手盘
+    if (order.ordType == OrderType::MARKET) {
+        bool hasCounterparty = (order.side == OrderSide::BUY) ? !asks_.empty() : !bids_.empty();
+        if (!hasCounterparty) {
+            LOG() << "[OrderBook:" << symbol_ << "] Rejected: market order with no counterparty";
+            order.status = OrderStatus::REJECTED;
+            return {};
+        }
+    }
+    
     // 生成订单ID
     order.orderID = generateOrderID();
     order.updateTime = std::chrono::system_clock::now();
     
-    LOG() << "[OrderBook:" << symbol_ << "] Adding order: " 
+    const char* ordTypeStr = (order.ordType == OrderType::MARKET) ? "MARKET" : "LIMIT";
+    LOG() << "[OrderBook:" << symbol_ << "] Adding " << ordTypeStr << " order: " 
           << order.clOrdID << " " << (order.side == OrderSide::BUY ? "BUY" : "SELL")
-          << " " << order.orderQty << " @ " << order.price;
+          << " " << order.orderQty 
+          << (order.ordType == OrderType::LIMIT ? " @ " + std::to_string(order.price) : "");
 
     std::vector<Trade> trades;
     
@@ -72,19 +84,27 @@ std::vector<Trade> OrderBook::addOrder(Order& order) {
         trades = matchSellOrder(order);
     }
 
-    // 如果还有剩余数量，挂入订单簿
+    // 处理剩余数量
     if (order.leavesQty > 0 && !order.isTerminal()) {
-        if (order.side == OrderSide::BUY) {
-            addToBids(order);
+        if (order.ordType == OrderType::MARKET) {
+            // 市价单未成交部分取消
+            order.status = (order.cumQty > 0) ? OrderStatus::CANCELED : OrderStatus::REJECTED;
+            LOG() << "[OrderBook:" << symbol_ << "] Market order " << order.clOrdID 
+                  << " remaining " << order.leavesQty << " canceled (no more counterparty)";
         } else {
-            addToAsks(order);
+            // 限价单挂入订单簿
+            if (order.side == OrderSide::BUY) {
+                addToBids(order);
+            } else {
+                addToAsks(order);
+            }
+            
+            // 更新订单状态
+            if (order.cumQty == 0) {
+                order.status = OrderStatus::NEW;
+            }
+            // 部分成交状态在撮合时已设置
         }
-        
-        // 更新订单状态
-        if (order.cumQty == 0) {
-            order.status = OrderStatus::NEW;
-        }
-        // 部分成交状态在撮合时已设置
     }
 
     return trades;
@@ -99,8 +119,9 @@ std::vector<Trade> OrderBook::matchBuyOrder(Order& buyOrder) {
         PriceLevel& level = it->second;
         
         // 检查价格是否可以成交
-        // 买价 >= 卖价 才能成交
-        if (buyOrder.price < level.price) {
+        // 市价单：不检查价格，直接成交
+        // 限价单：买价 >= 卖价 才能成交
+        if (buyOrder.ordType == OrderType::LIMIT && buyOrder.price < level.price) {
             break;  // 后面的卖价更高，不可能成交
         }
 
@@ -208,8 +229,9 @@ std::vector<Trade> OrderBook::matchSellOrder(Order& sellOrder) {
         PriceLevel& level = it->second;
         
         // 检查价格是否可以成交
-        // 卖价 <= 买价 才能成交
-        if (sellOrder.price > level.price) {
+        // 市价单：不检查价格，直接成交
+        // 限价单：卖价 <= 买价 才能成交
+        if (sellOrder.ordType == OrderType::LIMIT && sellOrder.price > level.price) {
             break;  // 后面的买价更低，不可能成交
         }
 
