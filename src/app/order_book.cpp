@@ -98,21 +98,24 @@ std::vector<Trade> OrderBook::addOrder(Order& order) {
     // 处理剩余数量
     if (order.leavesQty > 0 && !order.isTerminal()) {
         bool shouldCancelRemaining = false;
-        const char* cancelReason = nullptr;
+        std::string cancelReason;
         
-        if (order.ordType == OrderType::MARKET) {
+        // FOK 订单不应该走到这里（预检查应该已经拒绝）
+        if (order.timeInForce == TimeInForce::FOK) {
+            // 这是一个实现错误：FOK 预检查通过但未能全部成交
+            LOG() << "[OrderBook:" << symbol_ << "] ERROR: FOK order " << order.clOrdID 
+                  << " passed pre-check but has remaining qty " << order.leavesQty
+                  << " - this indicates a bug in calculateMatchableQty";
+            shouldCancelRemaining = true;
+            cancelReason = "FOK implementation error";
+        } else if (order.timeInForce == TimeInForce::IOC) {
+            // IOC: 立即成交否则取消（优先于市价单判断，因为 Market+IOC 应显示 IOC）
+            shouldCancelRemaining = true;
+            cancelReason = (order.ordType == OrderType::MARKET) ? "Market IOC" : "IOC";
+        } else if (order.ordType == OrderType::MARKET) {
             // 市价单：未成交部分取消
             shouldCancelRemaining = true;
             cancelReason = "no more counterparty";
-        } else if (order.timeInForce == TimeInForce::IOC) {
-            // IOC: 立即成交否则取消，未成交部分取消
-            shouldCancelRemaining = true;
-            cancelReason = "IOC order";
-        } else if (order.timeInForce == TimeInForce::FOK) {
-            // FOK: 不应该走到这里，因为 FOK 在前面已经处理
-            // 如果走到这里说明有部分成交，这是错误的
-            shouldCancelRemaining = true;
-            cancelReason = "FOK partial fill (should not happen)";
         } else {
             // DAY/GTC: 限价单挂入订单簿
             if (order.side == OrderSide::BUY) {

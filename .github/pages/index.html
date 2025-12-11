@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FIX 4.0 Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+        }
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .subtitle {
+            color: #8892b0;
+            margin-bottom: 3rem;
+            font-size: 1.1rem;
+        }
+        .cards {
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 2rem;
+            width: 280px;
+            text-decoration: none;
+            color: inherit;
+            transition: all 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+        .card-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        .card-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+        .card-desc {
+            color: #8892b0;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        .footer {
+            margin-top: 3rem;
+            color: #5a6a8a;
+            font-size: 0.85rem;
+        }
+        .footer a {
+            color: #00d4ff;
+            text-decoration: none;
+        }
+        .footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>FIX 4.0 Demo</h1>
+        <p class="subtitle">高性能 FIX 协议模拟交易系统</p>
+        
+        <div class="cards">
+            <a href="docs/" class="card">
+                <div class="card-icon">📚</div>
+                <div class="card-title">API 文档</div>
+                <div class="card-desc">Doxygen 生成的 API 参考文档，包含类、函数和模块说明</div>
+            </a>
+            
+            <a href="coverage/" class="card">
+                <div class="card-icon">📊</div>
+                <div class="card-title">覆盖率报告</div>
+                <div class="card-desc">单元测试代码覆盖率报告，查看测试覆盖情况</div>
+            </a>
+        </div>
+        
+        <div class="footer">
+            <p>
+                <a href="https://github.com/littleporcupine/FIX4.0_demo" target="_blank">GitHub 仓库</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>

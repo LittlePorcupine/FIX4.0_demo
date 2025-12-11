@@ -720,3 +720,154 @@ TEST_CASE("OrderBook - GTC order enters book when no match", "[order_book][tif]"
     REQUIRE(buyOrder.status == OrderStatus::NEW);
     REQUIRE(book.getBidOrderCount() == 1);  // GTC 挂入订单簿
 }
+
+
+// ============================================================================
+// 组合订单类型测试
+// ============================================================================
+
+// 辅助函数：创建市价单 + TimeInForce
+Order createMarketOrderWithTIF(const std::string& clOrdID, OrderSide side, int64_t qty,
+                               TimeInForce tif, const std::string& symbol = "TEST") {
+    Order order = createMarketOrder(clOrdID, side, qty, symbol);
+    order.timeInForce = tif;
+    return order;
+}
+
+TEST_CASE("OrderBook - Market IOC order full match", "[order_book][market][ioc]") {
+    OrderBook book("TEST");
+    
+    Order sellOrder = createOrder("SELL001", OrderSide::SELL, 100.0, 10);
+    book.addOrder(sellOrder);
+    
+    // Market + IOC 完全成交
+    Order buyOrder = createMarketOrderWithTIF("BUY001", OrderSide::BUY, 10, TimeInForce::IOC);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.size() == 1);
+    REQUIRE(buyOrder.status == OrderStatus::FILLED);
+}
+
+TEST_CASE("OrderBook - Market IOC order partial fill then cancel", "[order_book][market][ioc]") {
+    OrderBook book("TEST");
+    
+    Order sellOrder = createOrder("SELL001", OrderSide::SELL, 100.0, 5);
+    book.addOrder(sellOrder);
+    
+    // Market + IOC 部分成交后取消
+    Order buyOrder = createMarketOrderWithTIF("BUY001", OrderSide::BUY, 10, TimeInForce::IOC);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.size() == 1);
+    REQUIRE(trades[0].qty == 5);
+    REQUIRE(buyOrder.cumQty == 5);
+    REQUIRE(buyOrder.status == OrderStatus::CANCELED);
+}
+
+TEST_CASE("OrderBook - Market FOK order full match", "[order_book][market][fok]") {
+    OrderBook book("TEST");
+    
+    Order sellOrder = createOrder("SELL001", OrderSide::SELL, 100.0, 10);
+    book.addOrder(sellOrder);
+    
+    // Market + FOK 完全成交
+    Order buyOrder = createMarketOrderWithTIF("BUY001", OrderSide::BUY, 10, TimeInForce::FOK);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.size() == 1);
+    REQUIRE(buyOrder.status == OrderStatus::FILLED);
+}
+
+TEST_CASE("OrderBook - Market FOK order rejected when insufficient liquidity", "[order_book][market][fok]") {
+    OrderBook book("TEST");
+    
+    Order sellOrder = createOrder("SELL001", OrderSide::SELL, 100.0, 5);
+    book.addOrder(sellOrder);
+    
+    // Market + FOK 流动性不足，拒绝
+    Order buyOrder = createMarketOrderWithTIF("BUY001", OrderSide::BUY, 10, TimeInForce::FOK);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.empty());
+    REQUIRE(buyOrder.status == OrderStatus::REJECTED);
+    REQUIRE(book.getAskOrderCount() == 1);  // 原卖单还在
+}
+
+TEST_CASE("OrderBook - IOC sell order full match", "[order_book][ioc]") {
+    OrderBook book("TEST");
+    
+    Order buyOrder = createOrder("BUY001", OrderSide::BUY, 100.0, 10);
+    book.addOrder(buyOrder);
+    
+    // IOC 卖单完全成交
+    Order sellOrder = createOrderWithTIF("SELL001", OrderSide::SELL, 100.0, 10, TimeInForce::IOC);
+    auto trades = book.addOrder(sellOrder);
+    
+    REQUIRE(trades.size() == 1);
+    REQUIRE(sellOrder.status == OrderStatus::FILLED);
+}
+
+TEST_CASE("OrderBook - IOC sell order partial fill then cancel", "[order_book][ioc]") {
+    OrderBook book("TEST");
+    
+    Order buyOrder = createOrder("BUY001", OrderSide::BUY, 100.0, 5);
+    book.addOrder(buyOrder);
+    
+    // IOC 卖单部分成交后取消
+    Order sellOrder = createOrderWithTIF("SELL001", OrderSide::SELL, 100.0, 10, TimeInForce::IOC);
+    auto trades = book.addOrder(sellOrder);
+    
+    REQUIRE(trades.size() == 1);
+    REQUIRE(trades[0].qty == 5);
+    REQUIRE(sellOrder.cumQty == 5);
+    REQUIRE(sellOrder.status == OrderStatus::CANCELED);
+    REQUIRE(book.getAskOrderCount() == 0);  // IOC 不挂入订单簿
+}
+
+TEST_CASE("OrderBook - IOC order sweeps multiple price levels", "[order_book][ioc]") {
+    OrderBook book("TEST");
+    
+    // 挂多个价位的卖单
+    Order sell1 = createOrder("SELL001", OrderSide::SELL, 100.0, 5);
+    Order sell2 = createOrder("SELL002", OrderSide::SELL, 100.5, 5);
+    Order sell3 = createOrder("SELL003", OrderSide::SELL, 101.0, 5);
+    book.addOrder(sell1);
+    book.addOrder(sell2);
+    book.addOrder(sell3);
+    
+    // IOC 买单扫多个价位，但数量超过可用量
+    Order buyOrder = createOrderWithTIF("BUY001", OrderSide::BUY, 101.0, 20, TimeInForce::IOC);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.size() == 3);
+    REQUIRE(trades[0].price == 100.0);
+    REQUIRE(trades[1].price == 100.5);
+    REQUIRE(trades[2].price == 101.0);
+    REQUIRE(buyOrder.cumQty == 15);
+    REQUIRE(buyOrder.leavesQty == 5);
+    REQUIRE(buyOrder.status == OrderStatus::CANCELED);  // 剩余取消
+    REQUIRE(book.empty());  // 所有卖单都被吃掉
+}
+
+TEST_CASE("OrderBook - IOC sell order sweeps multiple price levels", "[order_book][ioc]") {
+    OrderBook book("TEST");
+    
+    // 挂多个价位的买单
+    Order buy1 = createOrder("BUY001", OrderSide::BUY, 101.0, 5);
+    Order buy2 = createOrder("BUY002", OrderSide::BUY, 100.5, 5);
+    Order buy3 = createOrder("BUY003", OrderSide::BUY, 100.0, 5);
+    book.addOrder(buy1);
+    book.addOrder(buy2);
+    book.addOrder(buy3);
+    
+    // IOC 卖单扫多个价位
+    Order sellOrder = createOrderWithTIF("SELL001", OrderSide::SELL, 100.0, 12, TimeInForce::IOC);
+    auto trades = book.addOrder(sellOrder);
+    
+    REQUIRE(trades.size() == 3);
+    REQUIRE(trades[0].price == 101.0);  // 最高买价优先
+    REQUIRE(trades[1].price == 100.5);
+    REQUIRE(trades[2].price == 100.0);
+    REQUIRE(sellOrder.cumQty == 12);
+    REQUIRE(sellOrder.status == OrderStatus::FILLED);
+}
