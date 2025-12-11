@@ -23,6 +23,7 @@ add_library(fix_engine STATIC
     src/base/config.cpp
     src/app/simulation_app.cpp
     src/app/matching_engine.cpp
+    src/app/order_book.cpp
     src/market/mock_md_adapter.cpp
 )
 

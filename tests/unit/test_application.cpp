@@ -430,3 +430,136 @@ TEST_CASE("Server session with Application - onLogon called", "[application][ser
     REQUIRE(app.last_session_id.senderCompID == "SERVER");
     REQUIRE(app.last_session_id.targetCompID == "CLIENT");
 }
+
+TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][orderbook]") {
+    MatchingEngine engine;
+    
+    // 收集 ExecutionReport
+    std::vector<std::pair<SessionID, ExecutionReport>> reports;
+    std::mutex reportsMutex;
+    
+    engine.setExecutionReportCallback([&](const SessionID& sid, const ExecutionReport& rpt) {
+        std::lock_guard<std::mutex> lock(reportsMutex);
+        reports.push_back({sid, rpt});
+    });
+    
+    engine.start();
+    
+    SessionID sid("CLIENT", "SERVER");
+    
+    SECTION("New order creates OrderBook and sends ExecutionReport") {
+        Order order;
+        order.clOrdID = "ORDER001";
+        order.symbol = "AAPL";
+        order.side = OrderSide::BUY;
+        order.orderQty = 100;
+        order.leavesQty = 100;
+        order.price = 150.0;
+        order.ordType = OrderType::LIMIT;
+        order.sessionID = sid;
+        
+        engine.submit(OrderEvent::newOrder(order));
+        
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        std::lock_guard<std::mutex> lock(reportsMutex);
+        REQUIRE(reports.size() == 1);
+        REQUIRE(reports[0].first == sid);
+        REQUIRE(reports[0].second.clOrdID == "ORDER001");
+        REQUIRE(reports[0].second.ordStatus == OrderStatus::NEW);
+        REQUIRE_FALSE(reports[0].second.orderID.empty());
+        
+        // 验证 OrderBook 已创建
+        const OrderBook* book = engine.getOrderBook("AAPL");
+        REQUIRE(book != nullptr);
+        REQUIRE(book->getBidOrderCount() == 1);
+    }
+    
+    SECTION("Matching orders produces trades") {
+        // 先挂卖单
+        Order sellOrder;
+        sellOrder.clOrdID = "SELL001";
+        sellOrder.symbol = "TEST";
+        sellOrder.side = OrderSide::SELL;
+        sellOrder.orderQty = 10;
+        sellOrder.leavesQty = 10;
+        sellOrder.price = 100.0;
+        sellOrder.ordType = OrderType::LIMIT;
+        sellOrder.sessionID = sid;
+        
+        engine.submit(OrderEvent::newOrder(sellOrder));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        
+        // 再挂买单，应该成交
+        Order buyOrder;
+        buyOrder.clOrdID = "BUY001";
+        buyOrder.symbol = "TEST";
+        buyOrder.side = OrderSide::BUY;
+        buyOrder.orderQty = 10;
+        buyOrder.leavesQty = 10;
+        buyOrder.price = 100.0;
+        buyOrder.ordType = OrderType::LIMIT;
+        buyOrder.sessionID = sid;
+        
+        engine.submit(OrderEvent::newOrder(buyOrder));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        std::lock_guard<std::mutex> lock(reportsMutex);
+        // 应该有：卖单确认 + 买单成交 + 卖单成交通知
+        REQUIRE(reports.size() >= 2);
+        
+        // 找到买单的报告
+        auto buyReport = std::find_if(reports.begin(), reports.end(),
+            [](const auto& p) { return p.second.clOrdID == "BUY001"; });
+        REQUIRE(buyReport != reports.end());
+        REQUIRE(buyReport->second.ordStatus == OrderStatus::FILLED);
+        REQUIRE(buyReport->second.cumQty == 10);
+        
+        // 验证 OrderBook 为空（双方都成交）
+        const OrderBook* book = engine.getOrderBook("TEST");
+        REQUIRE(book != nullptr);
+        REQUIRE(book->empty());
+    }
+    
+    SECTION("Cancel order") {
+        // 先挂单
+        Order order;
+        order.clOrdID = "ORDER001";
+        order.symbol = "AAPL";
+        order.side = OrderSide::BUY;
+        order.orderQty = 100;
+        order.leavesQty = 100;
+        order.price = 150.0;
+        order.ordType = OrderType::LIMIT;
+        order.sessionID = sid;
+        
+        engine.submit(OrderEvent::newOrder(order));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        
+        // 撤单
+        CancelRequest cancel;
+        cancel.clOrdID = "CANCEL001";
+        cancel.origClOrdID = "ORDER001";
+        cancel.symbol = "AAPL";
+        cancel.sessionID = sid;
+        
+        engine.submit(OrderEvent::cancelRequest(cancel));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        std::lock_guard<std::mutex> lock(reportsMutex);
+        // 应该有：订单确认 + 撤单确认
+        REQUIRE(reports.size() == 2);
+        
+        auto cancelReport = std::find_if(reports.begin(), reports.end(),
+            [](const auto& p) { return p.second.origClOrdID == "ORDER001"; });
+        REQUIRE(cancelReport != reports.end());
+        REQUIRE(cancelReport->second.ordStatus == OrderStatus::CANCELED);
+        
+        // 验证 OrderBook 为空
+        const OrderBook* book = engine.getOrderBook("AAPL");
+        REQUIRE(book != nullptr);
+        REQUIRE(book->empty());
+    }
+    
+    engine.stop();
+}
