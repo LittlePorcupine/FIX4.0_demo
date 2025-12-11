@@ -17,41 +17,107 @@ namespace fix40 {
 namespace {
 
 /**
- * @brief 从 FIX 消息解析 Order 结构
+ * @brief 解析结果
  */
-Order parseNewOrderSingle(const FixMessage& msg, const SessionID& sessionID) {
+struct ParseResult {
+    bool success = false;
+    std::string error;
     Order order;
+};
+
+/**
+ * @brief 从 FIX 消息解析 Order 结构
+ * @return ParseResult 包含解析结果和错误信息
+ */
+ParseResult parseNewOrderSingle(const FixMessage& msg, const SessionID& sessionID) {
+    ParseResult result;
+    Order& order = result.order;
     order.sessionID = sessionID;
     
-    // 必填字段
+    // 必填字段：ClOrdID
+    if (!msg.has(tags::ClOrdID)) {
+        result.error = "Missing required field: ClOrdID(11)";
+        return result;
+    }
     order.clOrdID = msg.get_string(tags::ClOrdID);
+    
+    // 必填字段：Symbol
+    if (!msg.has(tags::Symbol)) {
+        result.error = "Missing required field: Symbol(55)";
+        return result;
+    }
     order.symbol = msg.get_string(tags::Symbol);
     
-    // Side: 1=Buy, 2=Sell
+    // 必填字段：Side (1=Buy, 2=Sell)
+    if (!msg.has(tags::Side)) {
+        result.error = "Missing required field: Side(54)";
+        return result;
+    }
     std::string sideStr = msg.get_string(tags::Side);
-    order.side = (sideStr == "1") ? OrderSide::BUY : OrderSide::SELL;
-    
-    // OrderQty
-    if (msg.has(tags::OrderQty)) {
-        order.orderQty = std::stoll(msg.get_string(tags::OrderQty));
+    if (sideStr == "1") {
+        order.side = OrderSide::BUY;
+    } else if (sideStr == "2") {
+        order.side = OrderSide::SELL;
+    } else {
+        result.error = "Invalid Side(54) value: " + sideStr + " (expected 1 or 2)";
+        return result;
     }
     
-    // OrdType: 1=Market, 2=Limit
+    // 必填字段：OrderQty
+    if (!msg.has(tags::OrderQty)) {
+        result.error = "Missing required field: OrderQty(38)";
+        return result;
+    }
+    try {
+        order.orderQty = std::stoll(msg.get_string(tags::OrderQty));
+        if (order.orderQty <= 0) {
+            result.error = "Invalid OrderQty(38): must be positive";
+            return result;
+        }
+    } catch (const std::exception& e) {
+        result.error = "Invalid OrderQty(38) format: " + std::string(e.what());
+        return result;
+    }
+    
+    // 必填字段：OrdType (1=Market, 2=Limit)
+    if (!msg.has(tags::OrdType)) {
+        result.error = "Missing required field: OrdType(40)";
+        return result;
+    }
     std::string ordTypeStr = msg.get_string(tags::OrdType);
-    order.ordType = (ordTypeStr == "1") ? OrderType::MARKET : OrderType::LIMIT;
+    if (ordTypeStr == "1") {
+        order.ordType = OrderType::MARKET;
+    } else if (ordTypeStr == "2") {
+        order.ordType = OrderType::LIMIT;
+    } else {
+        LOG() << "[SimulationApp] Warning: Unknown OrdType(40)=" << ordTypeStr << ", defaulting to LIMIT";
+        order.ordType = OrderType::LIMIT;
+    }
     
     // Price (限价单必填)
     if (msg.has(tags::Price)) {
-        order.price = std::stod(msg.get_string(tags::Price));
+        try {
+            order.price = std::stod(msg.get_string(tags::Price));
+        } catch (const std::exception& e) {
+            result.error = "Invalid Price(44) format: " + std::string(e.what());
+            return result;
+        }
+    } else if (order.ordType == OrderType::LIMIT) {
+        result.error = "Missing required field: Price(44) for limit order";
+        return result;
     }
     
-    // TimeInForce: 0=Day, 1=GTC, 3=IOC, 4=FOK
+    // TimeInForce: 0=Day, 1=GTC, 3=IOC, 4=FOK (可选，默认 DAY)
     if (msg.has(tags::TimeInForce)) {
         std::string tifStr = msg.get_string(tags::TimeInForce);
         if (tifStr == "0") order.timeInForce = TimeInForce::DAY;
         else if (tifStr == "1") order.timeInForce = TimeInForce::GTC;
         else if (tifStr == "3") order.timeInForce = TimeInForce::IOC;
         else if (tifStr == "4") order.timeInForce = TimeInForce::FOK;
+        else {
+            LOG() << "[SimulationApp] Warning: Unknown TimeInForce(59)=" << tifStr << ", defaulting to DAY";
+            order.timeInForce = TimeInForce::DAY;
+        }
     }
     
     // 初始化执行状态
@@ -62,7 +128,8 @@ Order parseNewOrderSingle(const FixMessage& msg, const SessionID& sessionID) {
     order.createTime = std::chrono::system_clock::now();
     order.updateTime = order.createTime;
     
-    return order;
+    result.success = true;
+    return result;
 }
 
 /**
@@ -121,8 +188,13 @@ void SimulationApp::fromApp(const FixMessage& msg, const SessionID& sessionID) {
     // 解析 FIX 消息，转换为内部结构，提交到队列
     if (msgType == "D") {
         // NewOrderSingle
-        Order order = parseNewOrderSingle(msg, sessionID);
-        engine_.submit(OrderEvent::newOrder(order));
+        ParseResult result = parseNewOrderSingle(msg, sessionID);
+        if (result.success) {
+            engine_.submit(OrderEvent::newOrder(result.order));
+        } else {
+            LOG() << "[SimulationApp] Rejected NewOrderSingle: " << result.error;
+            // TODO: 发送 ExecutionReport 拒绝订单
+        }
     } else if (msgType == "F") {
         // OrderCancelRequest
         CancelRequest req = parseCancelRequest(msg, sessionID);

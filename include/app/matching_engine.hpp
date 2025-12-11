@@ -10,10 +10,21 @@
 #include <thread>
 #include <atomic>
 #include <functional>
+#include <unordered_map>
+#include <memory>
 #include "base/blockingconcurrentqueue.h"
 #include "app/order_event.hpp"
+#include "app/order_book.hpp"
 
 namespace fix40 {
+
+/**
+ * @brief ExecutionReport 回调类型
+ * 
+ * 当撮合引擎产生执行报告时调用此回调。
+ * 参数：sessionID - 目标会话，report - 执行报告
+ */
+using ExecutionReportCallback = std::function<void(const SessionID&, const ExecutionReport&)>;
 
 /**
  * @class MatchingEngine
@@ -28,10 +39,13 @@ namespace fix40 {
  * @par 使用示例
  * @code
  * MatchingEngine engine;
+ * engine.setExecutionReportCallback([](const SessionID& sid, const ExecutionReport& rpt) {
+ *     // 发送 ExecutionReport 到客户端
+ * });
  * engine.start();
  * 
  * // 从 Application::fromApp() 中提交事件
- * engine.submit(OrderEvent{OrderEventType::NEW_ORDER, sessionID, msg});
+ * engine.submit(OrderEvent{OrderEventType::NEW_ORDER, sessionID, order});
  * 
  * // 关闭时
  * engine.stop();
@@ -89,6 +103,23 @@ public:
      */
     bool is_running() const { return running_.load(); }
 
+    /**
+     * @brief 设置 ExecutionReport 回调
+     * @param callback 回调函数
+     * 
+     * 必须在 start() 之前调用。
+     */
+    void setExecutionReportCallback(ExecutionReportCallback callback) {
+        execReportCallback_ = std::move(callback);
+    }
+
+    /**
+     * @brief 获取订单簿（只读）
+     * @param symbol 合约代码
+     * @return const OrderBook* 订单簿指针，不存在返回 nullptr
+     */
+    const OrderBook* getOrderBook(const std::string& symbol) const;
+
 private:
     /**
      * @brief 引擎主循环
@@ -125,11 +156,42 @@ private:
      */
     void handle_session_logout(const OrderEvent& event);
 
+    /**
+     * @brief 获取或创建订单簿
+     * @param symbol 合约代码
+     * @return OrderBook& 订单簿引用
+     */
+    OrderBook& getOrCreateOrderBook(const std::string& symbol);
+
+    /**
+     * @brief 发送 ExecutionReport
+     * @param sessionID 目标会话
+     * @param report 执行报告
+     */
+    void sendExecutionReport(const SessionID& sessionID, const ExecutionReport& report);
+
+    /**
+     * @brief 生成 ExecID
+     */
+    std::string generateExecID();
+
     std::atomic<bool> running_{false};  ///< 运行状态
     std::thread worker_thread_;          ///< 工作线程
     
     /// 订单事件队列（无锁阻塞队列）
     moodycamel::BlockingConcurrentQueue<OrderEvent> event_queue_;
+
+    /// 订单簿映射：symbol -> OrderBook
+    std::unordered_map<std::string, std::unique_ptr<OrderBook>> orderBooks_;
+
+    /// 订单到会话的映射：clOrdID -> SessionID（用于成交通知）
+    std::unordered_map<std::string, SessionID> orderSessionMap_;
+
+    /// ExecutionReport 回调
+    ExecutionReportCallback execReportCallback_;
+
+    /// ExecID 计数器
+    uint64_t nextExecID_ = 1;
 };
 
 } // namespace fix40

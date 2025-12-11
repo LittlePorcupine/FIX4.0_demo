@@ -5,6 +5,8 @@
 
 #include "app/matching_engine.hpp"
 #include "base/logger.hpp"
+#include <sstream>
+#include <iomanip>
 
 namespace fix40 {
 
@@ -24,6 +26,19 @@ const char* tifToString(TimeInForce tif) {
         case TimeInForce::GTC: return "GTC";
         case TimeInForce::IOC: return "IOC";
         case TimeInForce::FOK: return "FOK";
+        default: return "Unknown";
+    }
+}
+
+const char* statusToString(OrderStatus status) {
+    switch (status) {
+        case OrderStatus::PENDING_NEW: return "PendingNew";
+        case OrderStatus::NEW: return "New";
+        case OrderStatus::PARTIALLY_FILLED: return "PartiallyFilled";
+        case OrderStatus::FILLED: return "Filled";
+        case OrderStatus::CANCELED: return "Canceled";
+        case OrderStatus::PENDING_CANCEL: return "PendingCancel";
+        case OrderStatus::REJECTED: return "Rejected";
         default: return "Unknown";
     }
 }
@@ -108,27 +123,118 @@ void MatchingEngine::process_event(const OrderEvent& event) {
 }
 
 void MatchingEngine::handle_new_order(const OrderEvent& event) {
-    const Order* order = event.getOrder();
-    if (!order) {
+    const Order* orderPtr = event.getOrder();
+    if (!orderPtr) {
         LOG() << "[MatchingEngine] Invalid NEW_ORDER event: no order data";
         return;
     }
     
-    LOG() << "[MatchingEngine] Processing NewOrderSingle from " << event.sessionID.to_string();
-    LOG() << "  ClOrdID: " << order->clOrdID;
-    LOG() << "  Symbol: " << order->symbol;
-    LOG() << "  Side: " << sideToString(order->side);
-    LOG() << "  OrderQty: " << order->orderQty;
-    LOG() << "  Price: " << order->price;
-    LOG() << "  OrdType: " << ordTypeToString(order->ordType);
-    LOG() << "  TimeInForce: " << tifToString(order->timeInForce);
+    // 复制订单（因为 addOrder 会修改订单）
+    Order order = *orderPtr;
     
-    // TODO: 实现实际的撮合逻辑
-    // 1. 生成 OrderID
-    // 2. 验证订单参数
-    // 3. 风控检查
-    // 4. 订单簿匹配
-    // 5. 生成 ExecutionReport 并发送回客户端
+    LOG() << "[MatchingEngine] Processing NewOrderSingle from " << event.sessionID.to_string();
+    LOG() << "  ClOrdID: " << order.clOrdID;
+    LOG() << "  Symbol: " << order.symbol;
+    LOG() << "  Side: " << sideToString(order.side);
+    LOG() << "  OrderQty: " << order.orderQty;
+    LOG() << "  Price: " << order.price;
+    LOG() << "  OrdType: " << ordTypeToString(order.ordType);
+    LOG() << "  TimeInForce: " << tifToString(order.timeInForce);
+    
+    // 记录订单与会话的映射
+    orderSessionMap_[order.clOrdID] = event.sessionID;
+    
+    // 获取或创建订单簿
+    OrderBook& book = getOrCreateOrderBook(order.symbol);
+    
+    // 执行撮合
+    std::vector<Trade> trades = book.addOrder(order);
+    
+    // 发送订单确认（NEW 或 FILLED）
+    ExecutionReport report;
+    report.orderID = order.orderID;
+    report.clOrdID = order.clOrdID;
+    report.execID = generateExecID();
+    report.symbol = order.symbol;
+    report.side = order.side;
+    report.orderQty = order.orderQty;
+    report.price = order.price;
+    report.ordType = order.ordType;
+    report.ordStatus = order.status;
+    report.cumQty = order.cumQty;
+    report.avgPx = order.avgPx;
+    report.leavesQty = order.leavesQty;
+    report.transactTime = order.updateTime;
+    
+    if (trades.empty()) {
+        // 无成交，发送 NEW 确认
+        report.execTransType = ExecTransType::NEW;
+        LOG() << "[MatchingEngine] Order " << order.clOrdID << " acknowledged: " << statusToString(order.status);
+    } else {
+        // 有成交
+        report.execTransType = ExecTransType::NEW;  // FIX 4.0 用 NEW + OrdStatus 表示成交
+        report.lastShares = trades.back().qty;
+        report.lastPx = trades.back().price;
+        LOG() << "[MatchingEngine] Order " << order.clOrdID << " executed: " 
+              << order.cumQty << "/" << order.orderQty << " @ " << order.avgPx;
+    }
+    
+    sendExecutionReport(event.sessionID, report);
+    
+    // 为每笔成交发送对手方的 ExecutionReport
+    for (const auto& trade : trades) {
+        // 确定对手方
+        const std::string& counterClOrdID = 
+            (trade.buyClOrdID == order.clOrdID) ? trade.sellClOrdID : trade.buyClOrdID;
+        
+        auto it = orderSessionMap_.find(counterClOrdID);
+        if (it != orderSessionMap_.end()) {
+            // 查找对手方订单状态
+            const Order* counterOrder = book.findOrder(counterClOrdID);
+            
+            ExecutionReport counterReport;
+            counterReport.execID = generateExecID();
+            counterReport.clOrdID = counterClOrdID;
+            counterReport.symbol = trade.symbol;
+            counterReport.lastShares = trade.qty;
+            counterReport.lastPx = trade.price;
+            counterReport.transactTime = trade.timestamp;
+            counterReport.execTransType = ExecTransType::NEW;
+            
+            if (counterOrder) {
+                // 订单还在簿上（部分成交）
+                counterReport.orderID = counterOrder->orderID;
+                counterReport.side = counterOrder->side;
+                counterReport.orderQty = counterOrder->orderQty;
+                counterReport.price = counterOrder->price;
+                counterReport.ordType = counterOrder->ordType;
+                counterReport.ordStatus = counterOrder->status;
+                counterReport.cumQty = counterOrder->cumQty;
+                counterReport.avgPx = counterOrder->avgPx;
+                counterReport.leavesQty = counterOrder->leavesQty;
+            } else {
+                // 订单已完全成交（从簿上移除）
+                counterReport.orderID = (trade.buyClOrdID == order.clOrdID) 
+                    ? trade.sellOrderID : trade.buyOrderID;
+                counterReport.side = (trade.buyClOrdID == order.clOrdID) 
+                    ? OrderSide::SELL : OrderSide::BUY;
+                counterReport.ordStatus = OrderStatus::FILLED;
+                // 其他字段需要从历史记录获取，这里简化处理
+            }
+            
+            sendExecutionReport(it->second, counterReport);
+            
+            // 如果对手方订单已完全成交，清理映射
+            if (!counterOrder) {
+                orderSessionMap_.erase(counterClOrdID);
+            }
+        }
+    }
+    
+    // 如果订单已完全成交，清理映射
+    if (order.isTerminal()) {
+        orderSessionMap_.erase(order.clOrdID);
+    }
 }
 
 void MatchingEngine::handle_cancel_request(const OrderEvent& event) {
@@ -143,21 +249,102 @@ void MatchingEngine::handle_cancel_request(const OrderEvent& event) {
     LOG() << "  OrigClOrdID: " << req->origClOrdID;
     LOG() << "  Symbol: " << req->symbol;
     
-    // TODO: 实现实际的撤单逻辑
-    // 1. 查找原订单
-    // 2. 检查是否可撤
-    // 3. 执行撤单
-    // 4. 生成 ExecutionReport 或 OrderCancelReject
+    // 查找订单簿
+    auto bookIt = orderBooks_.find(req->symbol);
+    if (bookIt == orderBooks_.end()) {
+        LOG() << "[MatchingEngine] Cancel rejected: symbol " << req->symbol << " not found";
+        // TODO: 发送 OrderCancelReject
+        return;
+    }
+    
+    // 执行撤单
+    auto canceledOrder = bookIt->second->cancelOrder(req->origClOrdID);
+    
+    ExecutionReport report;
+    report.clOrdID = req->clOrdID;
+    report.origClOrdID = req->origClOrdID;
+    report.execID = generateExecID();
+    report.symbol = req->symbol;
+    report.transactTime = std::chrono::system_clock::now();
+    
+    if (canceledOrder) {
+        // 撤单成功
+        report.orderID = canceledOrder->orderID;
+        report.side = canceledOrder->side;
+        report.orderQty = canceledOrder->orderQty;
+        report.price = canceledOrder->price;
+        report.ordType = canceledOrder->ordType;
+        report.ordStatus = OrderStatus::CANCELED;
+        report.cumQty = canceledOrder->cumQty;
+        report.avgPx = canceledOrder->avgPx;
+        report.leavesQty = 0;
+        report.execTransType = ExecTransType::NEW;  // FIX 4.0: NEW + CANCELED status
+        
+        LOG() << "[MatchingEngine] Order " << req->origClOrdID << " canceled";
+        
+        // 清理映射
+        orderSessionMap_.erase(req->origClOrdID);
+    } else {
+        // 撤单失败（订单不存在或已成交）
+        report.ordStatus = OrderStatus::REJECTED;
+        report.execTransType = ExecTransType::NEW;
+        report.text = "Order not found or already filled";
+        
+        LOG() << "[MatchingEngine] Cancel rejected: order " << req->origClOrdID << " not found";
+    }
+    
+    sendExecutionReport(event.sessionID, report);
 }
 
 void MatchingEngine::handle_session_logon(const OrderEvent& event) {
     LOG() << "[MatchingEngine] Session logged on: " << event.sessionID.to_string();
-    // TODO: 初始化该会话的交易状态
+    // 会话登录时可以初始化交易状态
 }
 
 void MatchingEngine::handle_session_logout(const OrderEvent& event) {
     LOG() << "[MatchingEngine] Session logged out: " << event.sessionID.to_string();
-    // TODO: 清理该会话的未完成订单
+    
+    // 清理该会话的订单映射（可选：也可以保留用于重连恢复）
+    // 这里简单处理，不主动撤单
+}
+
+OrderBook& MatchingEngine::getOrCreateOrderBook(const std::string& symbol) {
+    auto it = orderBooks_.find(symbol);
+    if (it == orderBooks_.end()) {
+        auto [newIt, inserted] = orderBooks_.emplace(
+            symbol, std::make_unique<OrderBook>(symbol));
+        LOG() << "[MatchingEngine] Created OrderBook for " << symbol;
+        return *newIt->second;
+    }
+    return *it->second;
+}
+
+const OrderBook* MatchingEngine::getOrderBook(const std::string& symbol) const {
+    auto it = orderBooks_.find(symbol);
+    if (it != orderBooks_.end()) {
+        return it->second.get();
+    }
+    return nullptr;
+}
+
+void MatchingEngine::sendExecutionReport(const SessionID& sessionID, const ExecutionReport& report) {
+    if (execReportCallback_) {
+        try {
+            execReportCallback_(sessionID, report);
+        } catch (const std::exception& e) {
+            LOG() << "[MatchingEngine] Exception in ExecutionReport callback: " << e.what();
+        } catch (...) {
+            LOG() << "[MatchingEngine] Unknown exception in ExecutionReport callback";
+        }
+    } else {
+        LOG() << "[MatchingEngine] No ExecutionReport callback set, report dropped";
+    }
+}
+
+std::string MatchingEngine::generateExecID() {
+    std::ostringstream oss;
+    oss << "EXEC-" << std::setfill('0') << std::setw(10) << nextExecID_++;
+    return oss.str();
 }
 
 } // namespace fix40

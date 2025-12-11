@@ -141,7 +141,7 @@ void MockMdAdapter::run() {
             pushMarketData(std::move(md));
         }
 
-        std::this_thread::sleep_for(tickInterval_.load());
+        std::this_thread::sleep_for(std::chrono::milliseconds(tickIntervalMs_.load()));
     }
 }
 

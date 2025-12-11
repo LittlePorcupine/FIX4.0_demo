@@ -51,6 +51,9 @@ enum class TimeInForce {
 /**
  * @enum OrderStatus
  * @brief 订单状态
+ * 
+ * @note 枚举值与 FIX 协议 OrdStatus(39) 标准定义保持一致，
+ *       数值不连续是故意的，便于与协议对照和日志分析。
  */
 enum class OrderStatus {
     NEW = 0,              ///< 新订单（已接受）
@@ -199,16 +202,21 @@ struct ExecutionReport {
     // 订单信息
     std::string symbol;        ///< 标的代码
     OrderSide side;            ///< 买卖方向
+    OrderType ordType;         ///< 订单类型
     int64_t orderQty;          ///< 订单数量
+    double price;              ///< 订单价格
 
     // 执行信息
     ExecTransType execTransType; ///< 执行事务类型
     OrderStatus ordStatus;       ///< 订单状态
-    int64_t lastQty;             ///< 本次成交数量
+    int64_t lastShares;          ///< 本次成交数量 (FIX 4.0: LastShares)
     double lastPx;               ///< 本次成交价格
     int64_t leavesQty;           ///< 剩余数量
     int64_t cumQty;              ///< 累计成交数量
     double avgPx;                ///< 平均成交价
+
+    // 时间
+    std::chrono::system_clock::time_point transactTime;  ///< 交易时间
 
     // 拒绝信息
     int ordRejReason;            ///< 拒绝原因代码
@@ -222,14 +230,17 @@ struct ExecutionReport {
      */
     ExecutionReport()
         : side(OrderSide::BUY)
+        , ordType(OrderType::LIMIT)
         , orderQty(0)
+        , price(0.0)
         , execTransType(ExecTransType::NEW)
         , ordStatus(OrderStatus::NEW)
-        , lastQty(0)
+        , lastShares(0)
         , lastPx(0.0)
         , leavesQty(0)
         , cumQty(0)
         , avgPx(0.0)
+        , transactTime(std::chrono::system_clock::now())
         , ordRejReason(0)
     {}
 };

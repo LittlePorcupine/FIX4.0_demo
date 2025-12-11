@@ -85,7 +85,7 @@ public:
      * @note 应在 start() 之前调用，运行时修改行为未定义
      */
     void setTickInterval(std::chrono::milliseconds interval) {
-        tickInterval_.store(interval);
+        tickIntervalMs_.store(interval.count());
     }
 
     /**
@@ -143,8 +143,8 @@ private:
     std::map<std::string, double> lastPrices_;
 
     StateCallback stateCallback_;
-    std::atomic<std::chrono::milliseconds> tickInterval_{std::chrono::milliseconds{1000}};
-    std::atomic<double> volatility_{0.005};  // 默认 0.5% 波动
+    std::atomic<int64_t> tickIntervalMs_{1000};  ///< 行情间隔（毫秒），使用 int64_t 保证 lock-free
+    std::atomic<double> volatility_{0.005};      ///< 默认 0.5% 波动
 
     std::mt19937 rng_;                       ///< 随机数生成器（仅工作线程访问）
     const std::string tradingDay_;           ///< 交易日（构造后不变）
