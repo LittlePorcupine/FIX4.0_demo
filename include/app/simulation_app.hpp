@@ -115,7 +115,8 @@ public:
      * @brief 获取会话管理器
      * @return SessionManager& 会话管理器引用
      *
-     * 用于注册/注销会话。
+     * 返回内部会话管理器的引用，调用者可通过该引用调用
+     * registerSession()/unregisterSession() 等方法管理会话。
      */
     SessionManager& getSessionManager() { return sessionManager_; }
 

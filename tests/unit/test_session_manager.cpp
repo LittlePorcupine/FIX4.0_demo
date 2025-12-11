@@ -115,7 +115,9 @@ TEST_CASE("SessionIDHash", "[session_manager]") {
     SessionID id2("A", "B");
     SessionID id3("B", "A");
     
+    // 相同的 SessionID 应该产生相同的哈希值
     REQUIRE(hasher(id1) == hasher(id2));
-    // Different order should produce different hash (usually)
-    // Note: This is not guaranteed but very likely
+    
+    // 不同的 SessionID 应该产生不同的哈希值（虽然理论上可能碰撞，但这个简单例子不会）
+    REQUIRE(hasher(id1) != hasher(id3));
 }
