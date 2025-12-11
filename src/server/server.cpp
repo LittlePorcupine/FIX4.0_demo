@@ -20,6 +20,7 @@
 #include "core/connection.hpp"
 #include "fix/session.hpp"
 #include "fix/application.hpp"
+#include "app/simulation_app.hpp"
 
 namespace fix40 {
 
@@ -182,6 +183,11 @@ void FixServer::on_new_connection(int fd) {
     // 设置应用层处理器
     if (application_) {
         session->set_application(application_);
+        
+        // 如果是 SimulationApp，注册 Session 到 SessionManager
+        if (auto* simApp = dynamic_cast<SimulationApp*>(application_)) {
+            simApp->getSessionManager().registerSession(session);
+        }
     }
 
     {
@@ -207,6 +213,16 @@ void FixServer::on_connection_close(int fd) {
     std::lock_guard<std::mutex> lock(connections_mutex_);
     auto it = connections_.find(fd);
     if (it != connections_.end()) {
+        // 从 SessionManager 注销 Session
+        if (application_) {
+            if (auto* simApp = dynamic_cast<SimulationApp*>(application_)) {
+                auto session = it->second->session();
+                if (session) {
+                    simApp->getSessionManager().unregisterSession(session->get_session_id());
+                }
+            }
+        }
+        
         it->second->shutdown();
         connections_.erase(it);
         LOG() << "Cleaned up resources for fd: " << fd;

@@ -12,14 +12,10 @@
 namespace fix40 {
 
 namespace {
-// 线程安全的 localtime 封装
+// 线程安全的 localtime 封装（仅支持 POSIX 系统）
 std::tm safe_localtime(std::time_t time) {
     std::tm tm{};
-#if defined(_WIN32)
-    localtime_s(&tm, &time);
-#else
     localtime_r(&time, &tm);
-#endif
     return tm;
 }
 } // anonymous namespace

@@ -7,7 +7,6 @@
 #include "app/simulation_app.hpp"
 #include "app/matching_engine.hpp"
 #include "app/order.hpp"
-#include <condition_variable>
 
 using namespace fix40;
 
@@ -447,12 +446,10 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
     // 收集 ExecutionReport
     std::vector<std::pair<SessionID, ExecutionReport>> reports;
     std::mutex reportsMutex;
-    std::condition_variable reportsCv;
     
     engine.setExecutionReportCallback([&](const SessionID& sid, const ExecutionReport& rpt) {
         std::lock_guard<std::mutex> lock(reportsMutex);
         reports.push_back({sid, rpt});
-        reportsCv.notify_all();
     });
     
     engine.start();
