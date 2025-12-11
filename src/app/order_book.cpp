@@ -75,6 +75,17 @@ std::vector<Trade> OrderBook::addOrder(Order& order) {
           << " " << order.orderQty 
           << (order.ordType == OrderType::LIMIT ? " @ " + std::to_string(order.price) : "");
 
+    // FOK 订单预检查：必须能全部成交
+    if (order.timeInForce == TimeInForce::FOK) {
+        int64_t availableQty = calculateMatchableQty(order);
+        if (availableQty < order.orderQty) {
+            LOG() << "[OrderBook:" << symbol_ << "] FOK order " << order.clOrdID 
+                  << " rejected: available " << availableQty << " < required " << order.orderQty;
+            order.status = OrderStatus::REJECTED;
+            return {};
+        }
+    }
+
     std::vector<Trade> trades;
     
     // 根据买卖方向撮合
@@ -86,13 +97,24 @@ std::vector<Trade> OrderBook::addOrder(Order& order) {
 
     // 处理剩余数量
     if (order.leavesQty > 0 && !order.isTerminal()) {
+        bool shouldCancelRemaining = false;
+        const char* cancelReason = nullptr;
+        
         if (order.ordType == OrderType::MARKET) {
-            // 市价单未成交部分取消
-            order.status = (order.cumQty > 0) ? OrderStatus::CANCELED : OrderStatus::REJECTED;
-            LOG() << "[OrderBook:" << symbol_ << "] Market order " << order.clOrdID 
-                  << " remaining " << order.leavesQty << " canceled (no more counterparty)";
+            // 市价单：未成交部分取消
+            shouldCancelRemaining = true;
+            cancelReason = "no more counterparty";
+        } else if (order.timeInForce == TimeInForce::IOC) {
+            // IOC: 立即成交否则取消，未成交部分取消
+            shouldCancelRemaining = true;
+            cancelReason = "IOC order";
+        } else if (order.timeInForce == TimeInForce::FOK) {
+            // FOK: 不应该走到这里，因为 FOK 在前面已经处理
+            // 如果走到这里说明有部分成交，这是错误的
+            shouldCancelRemaining = true;
+            cancelReason = "FOK partial fill (should not happen)";
         } else {
-            // 限价单挂入订单簿
+            // DAY/GTC: 限价单挂入订单簿
             if (order.side == OrderSide::BUY) {
                 addToBids(order);
             } else {
@@ -104,6 +126,15 @@ std::vector<Trade> OrderBook::addOrder(Order& order) {
                 order.status = OrderStatus::NEW;
             }
             // 部分成交状态在撮合时已设置
+        }
+        
+        if (shouldCancelRemaining) {
+            bool partialFilled = (order.cumQty > 0);
+            order.status = partialFilled ? OrderStatus::CANCELED : OrderStatus::REJECTED;
+            LOG() << "[OrderBook:" << symbol_ << "] Order " << order.clOrdID 
+                  << " remaining " << order.leavesQty 
+                  << (partialFilled ? " canceled" : " rejected") 
+                  << " (" << cancelReason << ")";
         }
     }
 
@@ -505,6 +536,38 @@ std::vector<PriceLevel> OrderBook::getAskLevels(size_t levels) const {
     }
     
     return result;
+}
+
+int64_t OrderBook::calculateMatchableQty(const Order& order) const {
+    int64_t matchableQty = 0;
+    
+    if (order.side == OrderSide::BUY) {
+        // 买单：遍历卖盘计算可成交数量
+        for (const auto& [askPrice, level] : asks_) {
+            // 市价单不检查价格，限价单检查价格
+            if (order.ordType == OrderType::LIMIT && order.price < askPrice) {
+                break;  // 后面的卖价更高，不可能成交
+            }
+            matchableQty += level.totalQty;
+            if (matchableQty >= order.orderQty) {
+                return order.orderQty;  // 已经足够
+            }
+        }
+    } else {
+        // 卖单：遍历买盘计算可成交数量
+        for (const auto& [bidPrice, level] : bids_) {
+            // 市价单不检查价格，限价单检查价格
+            if (order.ordType == OrderType::LIMIT && order.price > bidPrice) {
+                break;  // 后面的买价更低，不可能成交
+            }
+            matchableQty += level.totalQty;
+            if (matchableQty >= order.orderQty) {
+                return order.orderQty;  // 已经足够
+            }
+        }
+    }
+    
+    return matchableQty;
 }
 
 } // namespace fix40

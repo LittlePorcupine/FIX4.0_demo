@@ -525,3 +525,198 @@ TEST_CASE("OrderBook - Market order price is 0 but still valid", "[order_book][m
     REQUIRE(trades.size() == 1);
     REQUIRE(buyOrder.status == OrderStatus::FILLED);
 }
+
+
+// ============================================================================
+// IOC/FOK 订单测试
+// ============================================================================
+
+// 辅助函数：创建带 TimeInForce 的订单
+Order createOrderWithTIF(const std::string& clOrdID, OrderSide side, double price, 
+                         int64_t qty, TimeInForce tif, const std::string& symbol = "TEST") {
+    Order order = createOrder(clOrdID, side, price, qty, symbol);
+    order.timeInForce = tif;
+    return order;
+}
+
+TEST_CASE("OrderBook - IOC order full match", "[order_book][ioc]") {
+    OrderBook book("TEST");
+    
+    // 先挂卖单
+    Order sellOrder = createOrder("SELL001", OrderSide::SELL, 100.0, 10);
+    book.addOrder(sellOrder);
+    
+    // IOC 买单完全成交
+    Order buyOrder = createOrderWithTIF("BUY001", OrderSide::BUY, 100.0, 10, TimeInForce::IOC);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.size() == 1);
+    REQUIRE(buyOrder.status == OrderStatus::FILLED);
+    REQUIRE(book.empty());
+}
+
+TEST_CASE("OrderBook - IOC order partial fill then cancel", "[order_book][ioc]") {
+    OrderBook book("TEST");
+    
+    // 只挂 5 手卖单
+    Order sellOrder = createOrder("SELL001", OrderSide::SELL, 100.0, 5);
+    book.addOrder(sellOrder);
+    
+    // IOC 买单 10 手，只能成交 5 手，剩余取消
+    Order buyOrder = createOrderWithTIF("BUY001", OrderSide::BUY, 100.0, 10, TimeInForce::IOC);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.size() == 1);
+    REQUIRE(trades[0].qty == 5);
+    REQUIRE(buyOrder.cumQty == 5);
+    REQUIRE(buyOrder.leavesQty == 5);
+    REQUIRE(buyOrder.status == OrderStatus::CANCELED);  // 剩余取消
+    REQUIRE(book.getBidOrderCount() == 0);  // IOC 不挂入订单簿
+}
+
+TEST_CASE("OrderBook - IOC order no match rejected", "[order_book][ioc]") {
+    OrderBook book("TEST");
+    
+    // 卖盘价格高于买单价格，无法成交
+    Order sellOrder = createOrder("SELL001", OrderSide::SELL, 101.0, 10);
+    book.addOrder(sellOrder);
+    
+    // IOC 买单无法成交，被拒绝
+    Order buyOrder = createOrderWithTIF("BUY001", OrderSide::BUY, 100.0, 10, TimeInForce::IOC);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.empty());
+    REQUIRE(buyOrder.status == OrderStatus::REJECTED);
+    REQUIRE(book.getBidOrderCount() == 0);  // IOC 不挂入订单簿
+}
+
+TEST_CASE("OrderBook - IOC order does not enter book", "[order_book][ioc]") {
+    OrderBook book("TEST");
+    
+    // 空订单簿，IOC 买单无法成交
+    Order buyOrder = createOrderWithTIF("BUY001", OrderSide::BUY, 100.0, 10, TimeInForce::IOC);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.empty());
+    REQUIRE(buyOrder.status == OrderStatus::REJECTED);
+    REQUIRE(book.empty());  // IOC 不挂入订单簿
+}
+
+TEST_CASE("OrderBook - FOK order full match", "[order_book][fok]") {
+    OrderBook book("TEST");
+    
+    // 挂足够的卖单
+    Order sellOrder = createOrder("SELL001", OrderSide::SELL, 100.0, 10);
+    book.addOrder(sellOrder);
+    
+    // FOK 买单完全成交
+    Order buyOrder = createOrderWithTIF("BUY001", OrderSide::BUY, 100.0, 10, TimeInForce::FOK);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.size() == 1);
+    REQUIRE(buyOrder.status == OrderStatus::FILLED);
+    REQUIRE(book.empty());
+}
+
+TEST_CASE("OrderBook - FOK order rejected when cannot fill completely", "[order_book][fok]") {
+    OrderBook book("TEST");
+    
+    // 只挂 5 手卖单
+    Order sellOrder = createOrder("SELL001", OrderSide::SELL, 100.0, 5);
+    book.addOrder(sellOrder);
+    
+    // FOK 买单 10 手，无法全部成交，被拒绝
+    Order buyOrder = createOrderWithTIF("BUY001", OrderSide::BUY, 100.0, 10, TimeInForce::FOK);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.empty());  // 没有成交
+    REQUIRE(buyOrder.status == OrderStatus::REJECTED);
+    REQUIRE(buyOrder.cumQty == 0);
+    REQUIRE(book.getAskOrderCount() == 1);  // 原卖单还在
+}
+
+TEST_CASE("OrderBook - FOK order rejected when no counterparty", "[order_book][fok]") {
+    OrderBook book("TEST");
+    
+    // 空订单簿
+    Order buyOrder = createOrderWithTIF("BUY001", OrderSide::BUY, 100.0, 10, TimeInForce::FOK);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.empty());
+    REQUIRE(buyOrder.status == OrderStatus::REJECTED);
+    REQUIRE(book.empty());
+}
+
+TEST_CASE("OrderBook - FOK order rejected when price gap", "[order_book][fok]") {
+    OrderBook book("TEST");
+    
+    // 卖盘价格高于买单价格
+    Order sellOrder = createOrder("SELL001", OrderSide::SELL, 101.0, 10);
+    book.addOrder(sellOrder);
+    
+    // FOK 买单价格低于卖盘，无法成交
+    Order buyOrder = createOrderWithTIF("BUY001", OrderSide::BUY, 100.0, 10, TimeInForce::FOK);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.empty());
+    REQUIRE(buyOrder.status == OrderStatus::REJECTED);
+}
+
+TEST_CASE("OrderBook - FOK order sweeps multiple levels", "[order_book][fok]") {
+    OrderBook book("TEST");
+    
+    // 挂多个价位的卖单，总量足够
+    Order sell1 = createOrder("SELL001", OrderSide::SELL, 100.0, 5);
+    Order sell2 = createOrder("SELL002", OrderSide::SELL, 100.5, 5);
+    Order sell3 = createOrder("SELL003", OrderSide::SELL, 101.0, 5);
+    book.addOrder(sell1);
+    book.addOrder(sell2);
+    book.addOrder(sell3);
+    
+    // FOK 买单扫多个价位
+    Order buyOrder = createOrderWithTIF("BUY001", OrderSide::BUY, 101.0, 12, TimeInForce::FOK);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.size() == 3);
+    REQUIRE(buyOrder.status == OrderStatus::FILLED);
+    REQUIRE(buyOrder.cumQty == 12);
+}
+
+TEST_CASE("OrderBook - FOK sell order", "[order_book][fok]") {
+    OrderBook book("TEST");
+    
+    // 挂买单
+    Order buyOrder = createOrder("BUY001", OrderSide::BUY, 100.0, 10);
+    book.addOrder(buyOrder);
+    
+    // FOK 卖单
+    Order sellOrder = createOrderWithTIF("SELL001", OrderSide::SELL, 100.0, 10, TimeInForce::FOK);
+    auto trades = book.addOrder(sellOrder);
+    
+    REQUIRE(trades.size() == 1);
+    REQUIRE(sellOrder.status == OrderStatus::FILLED);
+}
+
+TEST_CASE("OrderBook - DAY order enters book when no match", "[order_book][tif]") {
+    OrderBook book("TEST");
+    
+    // DAY 订单无法成交时应该挂入订单簿
+    Order buyOrder = createOrderWithTIF("BUY001", OrderSide::BUY, 100.0, 10, TimeInForce::DAY);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.empty());
+    REQUIRE(buyOrder.status == OrderStatus::NEW);
+    REQUIRE(book.getBidOrderCount() == 1);  // DAY 挂入订单簿
+}
+
+TEST_CASE("OrderBook - GTC order enters book when no match", "[order_book][tif]") {
+    OrderBook book("TEST");
+    
+    // GTC 订单无法成交时应该挂入订单簿
+    Order buyOrder = createOrderWithTIF("BUY001", OrderSide::BUY, 100.0, 10, TimeInForce::GTC);
+    auto trades = book.addOrder(buyOrder);
+    
+    REQUIRE(trades.empty());
+    REQUIRE(buyOrder.status == OrderStatus::NEW);
+    REQUIRE(book.getBidOrderCount() == 1);  // GTC 挂入订单簿
+}

@@ -239,6 +239,13 @@ private:
      */
     std::optional<Order> removeOrder(const std::string& clOrdID, OrderSide side);
 
+    /**
+     * @brief 计算订单可成交数量（用于 FOK 预检查）
+     * @param order 待检查的订单
+     * @return int64_t 可成交数量
+     */
+    int64_t calculateMatchableQty(const Order& order) const;
+
     std::string symbol_;  ///< 合约代码
 
     /// 买盘：价格降序（greater 使 map 按价格从高到低排列）
