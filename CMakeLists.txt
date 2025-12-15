@@ -9,6 +9,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF) # 强制使用标准 C++，而非 GNU++ 扩展
 
+# 生成 compile_commands.json 供 IDE 使用
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # 添加推荐的编译器警告选项，以提高代码质量
 add_compile_options(-Wall -Wextra -pedantic)
 

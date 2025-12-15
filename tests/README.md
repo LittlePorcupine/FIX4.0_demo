@@ -1,12 +1,14 @@
 # 测试
 
-## 单元测试
+## 测试框架
 
-使用 [Catch2](https://github.com/catchorg/Catch2) v2 测试框架。
+- **单元测试**: [Catch2](https://github.com/catchorg/Catch2) v2
+- **属性测试**: [RapidCheck](https://github.com/emil-e/rapidcheck)
 
-### 构建
+## 构建
 
 ```bash
+# 构建测试（RapidCheck 会通过 CMake FetchContent 自动下载）
 cmake -B tests/build -S tests
 cmake --build tests/build
 ```
@@ -27,6 +29,7 @@ cmake --build tests/build
 | `unit/test_config.cpp` | 配置文件解析 |
 | `unit/test_thread_pool.cpp` | 线程池 |
 | `unit/test_session.cpp` | Session 状态机和消息处理 |
+| `unit/test_rapidcheck_integration.cpp` | RapidCheck 属性测试集成验证 |
 
 ### 运行特定测试
 
@@ -46,11 +49,60 @@ cmake --build tests/build
 # 只运行 session 相关测试
 ./tests/build/unit_tests [session]
 
+# 只运行 RapidCheck 属性测试
+./tests/build/unit_tests [rapidcheck]
+
 # 只运行边界测试
 ./tests/build/unit_tests [edge]
 
 # 列出所有测试
 ./tests/build/unit_tests --list-tests
+```
+
+## 属性测试 (Property-Based Testing)
+
+属性测试使用 RapidCheck 框架，与 Catch2 集成。属性测试会自动生成大量随机测试数据来验证代码的正确性属性。
+
+### 编写属性测试
+
+```cpp
+#include "../catch2/catch.hpp"
+#include <rapidcheck.h>
+#include <rapidcheck/catch.h>
+
+// **Feature: paper-trading-system, Property 2: 限价单撮合正确性**
+// **Validates: Requirements 4.1, 4.2, 4.3, 4.4**
+TEST_CASE("限价单撮合正确性", "[matching][property]") {
+    rc::prop("买单价格>=卖一价时应成交",
+        [](int buyPrice, int askPrice) {
+            // 属性测试逻辑
+            bool shouldMatch = (buyPrice >= askPrice);
+            // ... 验证撮合结果
+            return shouldMatch == actualMatch;
+        });
+}
+```
+
+### 运行属性测试
+
+```bash
+# 运行所有属性测试
+./tests/build/unit_tests [rapidcheck]
+
+# 运行特定属性测试
+./tests/build/unit_tests "限价单撮合正确性"
+```
+
+### 配置
+
+RapidCheck 默认运行 100 次迭代。可以通过环境变量配置：
+
+```bash
+# 设置迭代次数
+RC_PARAMS="max_success=200" ./tests/build/unit_tests [rapidcheck]
+
+# 设置随机种子（用于复现失败）
+RC_PARAMS="seed=12345" ./tests/build/unit_tests [rapidcheck]
 ```
 
 ## 端到端测试
