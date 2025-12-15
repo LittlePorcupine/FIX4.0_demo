@@ -1,5 +1,5 @@
 # 测试 CMakeLists.txt
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 
 project(FixDemo_Tests CXX)
 
@@ -20,6 +20,23 @@ endif()
 # 添加父目录的 include 路径
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+
+# =============================================================================
+# RapidCheck 属性测试库 (通过 FetchContent 获取)
+# =============================================================================
+include(FetchContent)
+
+FetchContent_Declare(
+    rapidcheck
+    GIT_REPOSITORY https://github.com/emil-e/rapidcheck.git
+    GIT_TAG        master  # 使用 master 分支
+)
+
+# 设置 RapidCheck 选项：启用 Catch2 集成
+set(RC_ENABLE_CATCH ON CACHE BOOL "Enable Catch2 integration")
+
+FetchContent_MakeAvailable(rapidcheck)
+message(STATUS "RapidCheck property-based testing library: ENABLED (via FetchContent)")
 
 # SQLite 依赖
 find_package(SQLite3 REQUIRED)
@@ -60,12 +77,22 @@ add_executable(unit_tests
     unit/test_order_book.cpp
     unit/test_session_manager.cpp
     unit/test_sqlite_store.cpp
+    # RapidCheck 属性测试
+    unit/test_rapidcheck_integration.cpp
 )
 
 target_link_libraries(unit_tests PRIVATE fix_engine_test)
 if (UNIX)
     target_link_libraries(unit_tests PRIVATE Threads::Threads)
 endif()
+
+# 链接 RapidCheck 库（用于属性测试）
+target_link_libraries(unit_tests PRIVATE rapidcheck)
+
+# 添加 RapidCheck Catch2 集成头文件路径 (FetchContent 下载位置)
+target_include_directories(unit_tests PRIVATE
+    ${rapidcheck_SOURCE_DIR}/extras/catch/include
+)
 
 # 复制 config.ini 到测试目录
 configure_file(

@@ -16,6 +16,8 @@ build/
 # 测试构建产物
 tests/build/
 
+# RapidCheck 库现在通过 CMake FetchContent 自动获取，不再需要手动管理
+
 # SimNow 配置文件 (包含敏感信息)
 simnow.ini
 tests/ctp_test/simnow.ini
