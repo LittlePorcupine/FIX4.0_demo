@@ -12,11 +12,37 @@ set(CMAKE_CXX_EXTENSIONS OFF) # 强制使用标准 C++，而非 GNU++ 扩展
 # 添加推荐的编译器警告选项，以提高代码质量
 add_compile_options(-Wall -Wextra -pedantic)
 
+# =============================================================================
+# CTP 支持选项
+# =============================================================================
+option(ENABLE_CTP "Enable CTP market data adapter" OFF)
+
+if(ENABLE_CTP)
+    message(STATUS "CTP support: ENABLED")
+    add_definitions(-DENABLE_CTP)
+    
+    # CTP SDK 路径
+    if(APPLE)
+        set(CTP_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/ctp/macos/include")
+        set(CTP_FRAMEWORK_DIR "${CMAKE_SOURCE_DIR}/third_party/ctp/macos/framework")
+    elseif(UNIX)
+        set(CTP_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/ctp/linux/include")
+        set(CTP_LIB_DIR "${CMAKE_SOURCE_DIR}/third_party/ctp/linux/lib")
+    endif()
+else()
+    message(STATUS "CTP support: DISABLED (use -DENABLE_CTP=ON to enable)")
+endif()
+
 # 添加 include 目录，以便编译器找到头文件
 include_directories(include)
 
+# CTP 头文件目录
+if(ENABLE_CTP)
+    include_directories(${CTP_INCLUDE_DIR})
+endif()
+
 # 1. 创建一个静态库 "fix_engine" 用于存放核心逻辑
-add_library(fix_engine STATIC
+set(FIX_ENGINE_SOURCES
     src/fix/session.cpp
     src/fix/session_manager.cpp
     src/core/connection.cpp
@@ -28,8 +54,34 @@ add_library(fix_engine STATIC
     src/market/mock_md_adapter.cpp
 )
 
+# CTP 源文件（条件编译）
+if(ENABLE_CTP)
+    list(APPEND FIX_ENGINE_SOURCES src/market/ctp_md_adapter.cpp)
+endif()
+
+add_library(fix_engine STATIC ${FIX_ENGINE_SOURCES})
+
 # 为 fix_engine 库指定头文件搜索路径
 target_include_directories(fix_engine PUBLIC include)
+
+# CTP 链接（条件编译）
+if(ENABLE_CTP)
+    if(APPLE)
+        # 直接链接动态库文件，避免符号链接问题
+        set(CTP_DYLIB "${CTP_FRAMEWORK_DIR}/thostmduserapi_se.framework/Versions/A/thostmduserapi_se")
+        target_link_libraries(fix_engine PUBLIC "${CTP_DYLIB}")
+        set_target_properties(fix_engine PROPERTIES
+            BUILD_RPATH "${CTP_FRAMEWORK_DIR}/thostmduserapi_se.framework/Versions/A"
+        )
+    elseif(UNIX)
+        target_link_libraries(fix_engine PUBLIC
+            "${CTP_LIB_DIR}/libthostmduserapi_se.so"
+        )
+        set_target_properties(fix_engine PROPERTIES
+            BUILD_RPATH "${CTP_LIB_DIR}"
+        )
+    endif()
+endif()
 
 # 在类 Unix 系统上链接 pthread
 if (UNIX)
