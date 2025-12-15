@@ -29,7 +29,7 @@ include(FetchContent)
 FetchContent_Declare(
     rapidcheck
     GIT_REPOSITORY https://github.com/emil-e/rapidcheck.git
-    GIT_TAG        master  # 使用 master 分支
+    GIT_TAG        ff6af6fc683159deb51c543b065eba14dfcf329b  # 锁定到稳定commit
 )
 
 # 设置 RapidCheck 选项：启用 Catch2 集成

@@ -5,7 +5,7 @@
  * 此文件用于验证 RapidCheck 属性测试库是否正确集成到项目中。
  */
 
-#include "catch2/catch.hpp"
+#include "../catch2/catch.hpp"
 #include <rapidcheck.h>
 #include <rapidcheck/catch.h>
 

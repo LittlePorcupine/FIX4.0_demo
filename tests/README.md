@@ -7,13 +7,8 @@
 
 ## 构建
 
-首次构建前需要获取 RapidCheck 库：
-
 ```bash
-# 克隆 RapidCheck 到 tests/rapidcheck
-git clone --depth 1 https://github.com/emil-e/rapidcheck.git tests/rapidcheck
-
-# 构建测试
+# 构建测试（RapidCheck 会通过 CMake FetchContent 自动下载）
 cmake -B tests/build -S tests
 cmake --build tests/build
 ```
@@ -71,7 +66,7 @@ cmake --build tests/build
 ### 编写属性测试
 
 ```cpp
-#include "catch2/catch.hpp"
+#include "../catch2/catch.hpp"
 #include <rapidcheck.h>
 #include <rapidcheck/catch.h>
 
