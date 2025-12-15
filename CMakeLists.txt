@@ -33,6 +33,12 @@ else()
     message(STATUS "CTP support: DISABLED (use -DENABLE_CTP=ON to enable)")
 endif()
 
+# =============================================================================
+# SQLite 依赖
+# =============================================================================
+find_package(SQLite3 REQUIRED)
+message(STATUS "SQLite3 found: ${SQLite3_VERSION}")
+
 # 添加 include 目录，以便编译器找到头文件
 include_directories(include)
 
@@ -52,6 +58,7 @@ set(FIX_ENGINE_SOURCES
     src/app/matching_engine.cpp
     src/app/order_book.cpp
     src/market/mock_md_adapter.cpp
+    src/storage/sqlite_store.cpp
 )
 
 # CTP 源文件（条件编译）
@@ -63,6 +70,9 @@ add_library(fix_engine STATIC ${FIX_ENGINE_SOURCES})
 
 # 为 fix_engine 库指定头文件搜索路径
 target_include_directories(fix_engine PUBLIC include)
+
+# 链接 SQLite
+target_link_libraries(fix_engine PUBLIC SQLite::SQLite3)
 
 # CTP 链接（条件编译）
 if(ENABLE_CTP)
