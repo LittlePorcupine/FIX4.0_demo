@@ -17,6 +17,9 @@ SqliteStore::SqliteStore(const std::string& dbPath) {
         if (path.has_parent_path()) {
             std::error_code ec;
             std::filesystem::create_directories(path.parent_path(), ec);
+            if (ec) {
+                LOG() << "[SqliteStore] 创建目录失败: " << ec.message();
+            }
         }
     }
 
@@ -134,6 +137,45 @@ bool SqliteStore::execute(const std::string& sql) {
 }
 
 // =============================================================================
+// 辅助函数：从 SQLite 结果行提取对象
+// =============================================================================
+
+Order SqliteStore::extractOrder(sqlite3_stmt* stmt) {
+    Order order;
+    order.clOrdID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    const char* orderID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+    order.orderID = orderID ? orderID : "";
+    order.symbol = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+    order.side = static_cast<OrderSide>(sqlite3_column_int(stmt, 3));
+    order.ordType = static_cast<OrderType>(sqlite3_column_int(stmt, 4));
+    order.timeInForce = static_cast<TimeInForce>(sqlite3_column_int(stmt, 5));
+    order.price = sqlite3_column_double(stmt, 6);
+    order.orderQty = sqlite3_column_int64(stmt, 7);
+    order.cumQty = sqlite3_column_int64(stmt, 8);
+    order.leavesQty = sqlite3_column_int64(stmt, 9);
+    order.avgPx = sqlite3_column_double(stmt, 10);
+    order.status = static_cast<OrderStatus>(sqlite3_column_int(stmt, 11));
+    return order;
+}
+
+StoredTrade SqliteStore::extractTrade(sqlite3_stmt* stmt) {
+    StoredTrade trade;
+    const char* tradeId = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    const char* clOrdID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+    const char* symbol = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+    trade.tradeId = tradeId ? tradeId : "";
+    trade.clOrdID = clOrdID ? clOrdID : "";
+    trade.symbol = symbol ? symbol : "";
+    trade.side = static_cast<OrderSide>(sqlite3_column_int(stmt, 3));
+    trade.price = sqlite3_column_double(stmt, 4);
+    trade.quantity = sqlite3_column_int64(stmt, 5);
+    trade.timestamp = sqlite3_column_int64(stmt, 6);
+    const char* cp = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
+    trade.counterpartyOrderId = cp ? cp : "";
+    return trade;
+}
+
+// =============================================================================
 // 订单存储
 // =============================================================================
 
@@ -191,7 +233,10 @@ bool SqliteStore::updateOrder(const Order& order) {
 
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK) return false;
+    if (rc != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return false;
+    }
 
     auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
@@ -220,25 +265,15 @@ std::optional<Order> SqliteStore::loadOrder(const std::string& clOrdID) {
 
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK) return std::nullopt;
+    if (rc != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return std::nullopt;
+    }
 
     sqlite3_bind_text(stmt, 1, clOrdID.c_str(), -1, SQLITE_TRANSIENT);
 
     if (sqlite3_step(stmt) == SQLITE_ROW) {
-        Order order;
-        order.clOrdID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        const char* orderID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        order.orderID = orderID ? orderID : "";
-        order.symbol = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        order.side = static_cast<OrderSide>(sqlite3_column_int(stmt, 3));
-        order.ordType = static_cast<OrderType>(sqlite3_column_int(stmt, 4));
-        order.timeInForce = static_cast<TimeInForce>(sqlite3_column_int(stmt, 5));
-        order.price = sqlite3_column_double(stmt, 6);
-        order.orderQty = sqlite3_column_int64(stmt, 7);
-        order.cumQty = sqlite3_column_int64(stmt, 8);
-        order.leavesQty = sqlite3_column_int64(stmt, 9);
-        order.avgPx = sqlite3_column_double(stmt, 10);
-        order.status = static_cast<OrderStatus>(sqlite3_column_int(stmt, 11));
+        Order order = extractOrder(stmt);
         sqlite3_finalize(stmt);
         return order;
     }
@@ -258,26 +293,15 @@ std::vector<Order> SqliteStore::loadOrdersBySymbol(const std::string& symbol) {
     )";
 
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return orders;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return orders;
+    }
 
     sqlite3_bind_text(stmt, 1, symbol.c_str(), -1, SQLITE_TRANSIENT);
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        Order order;
-        order.clOrdID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        const char* orderID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        order.orderID = orderID ? orderID : "";
-        order.symbol = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        order.side = static_cast<OrderSide>(sqlite3_column_int(stmt, 3));
-        order.ordType = static_cast<OrderType>(sqlite3_column_int(stmt, 4));
-        order.timeInForce = static_cast<TimeInForce>(sqlite3_column_int(stmt, 5));
-        order.price = sqlite3_column_double(stmt, 6);
-        order.orderQty = sqlite3_column_int64(stmt, 7);
-        order.cumQty = sqlite3_column_int64(stmt, 8);
-        order.leavesQty = sqlite3_column_int64(stmt, 9);
-        order.avgPx = sqlite3_column_double(stmt, 10);
-        order.status = static_cast<OrderStatus>(sqlite3_column_int(stmt, 11));
-        orders.push_back(order);
+        orders.push_back(extractOrder(stmt));
     }
 
     sqlite3_finalize(stmt);
@@ -288,32 +312,23 @@ std::vector<Order> SqliteStore::loadActiveOrders() {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<Order> orders;
     
-    // NEW=0, PARTIALLY_FILLED=1, PENDING_NEW=10
-    const char* sql = R"(
+    // 使用枚举值构建 SQL，避免硬编码魔术数字
+    std::string sql = R"(
         SELECT cl_ord_id, order_id, symbol, side, order_type, time_in_force,
                price, order_qty, cum_qty, leaves_qty, avg_px, status
-        FROM orders WHERE status IN (0, 1, 10)
-    )";
+        FROM orders WHERE status IN ()" +
+        std::to_string(static_cast<int>(OrderStatus::NEW)) + ", " +
+        std::to_string(static_cast<int>(OrderStatus::PARTIALLY_FILLED)) + ", " +
+        std::to_string(static_cast<int>(OrderStatus::PENDING_NEW)) + ")";
 
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return orders;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return orders;
+    }
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        Order order;
-        order.clOrdID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        const char* orderID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        order.orderID = orderID ? orderID : "";
-        order.symbol = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        order.side = static_cast<OrderSide>(sqlite3_column_int(stmt, 3));
-        order.ordType = static_cast<OrderType>(sqlite3_column_int(stmt, 4));
-        order.timeInForce = static_cast<TimeInForce>(sqlite3_column_int(stmt, 5));
-        order.price = sqlite3_column_double(stmt, 6);
-        order.orderQty = sqlite3_column_int64(stmt, 7);
-        order.cumQty = sqlite3_column_int64(stmt, 8);
-        order.leavesQty = sqlite3_column_int64(stmt, 9);
-        order.avgPx = sqlite3_column_double(stmt, 10);
-        order.status = static_cast<OrderStatus>(sqlite3_column_int(stmt, 11));
-        orders.push_back(order);
+        orders.push_back(extractOrder(stmt));
     }
 
     sqlite3_finalize(stmt);
@@ -331,24 +346,13 @@ std::vector<Order> SqliteStore::loadAllOrders() {
     )";
 
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return orders;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return orders;
+    }
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        Order order;
-        order.clOrdID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        const char* orderID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        order.orderID = orderID ? orderID : "";
-        order.symbol = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        order.side = static_cast<OrderSide>(sqlite3_column_int(stmt, 3));
-        order.ordType = static_cast<OrderType>(sqlite3_column_int(stmt, 4));
-        order.timeInForce = static_cast<TimeInForce>(sqlite3_column_int(stmt, 5));
-        order.price = sqlite3_column_double(stmt, 6);
-        order.orderQty = sqlite3_column_int64(stmt, 7);
-        order.cumQty = sqlite3_column_int64(stmt, 8);
-        order.leavesQty = sqlite3_column_int64(stmt, 9);
-        order.avgPx = sqlite3_column_double(stmt, 10);
-        order.status = static_cast<OrderStatus>(sqlite3_column_int(stmt, 11));
-        orders.push_back(order);
+        orders.push_back(extractOrder(stmt));
     }
 
     sqlite3_finalize(stmt);
@@ -369,7 +373,10 @@ bool SqliteStore::saveTrade(const StoredTrade& trade) {
     )";
 
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return false;
+    }
 
     sqlite3_bind_text(stmt, 1, trade.tradeId.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, trade.clOrdID.c_str(), -1, SQLITE_TRANSIENT);
@@ -397,25 +404,15 @@ std::vector<StoredTrade> SqliteStore::loadTradesByOrder(const std::string& clOrd
     )";
 
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return trades;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return trades;
+    }
 
     sqlite3_bind_text(stmt, 1, clOrdID.c_str(), -1, SQLITE_TRANSIENT);
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        StoredTrade trade;
-        const char* tradeId = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        const char* clOrdID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        const char* symbol = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        trade.tradeId = tradeId ? tradeId : "";
-        trade.clOrdID = clOrdID ? clOrdID : "";
-        trade.symbol = symbol ? symbol : "";
-        trade.side = static_cast<OrderSide>(sqlite3_column_int(stmt, 3));
-        trade.price = sqlite3_column_double(stmt, 4);
-        trade.quantity = sqlite3_column_int64(stmt, 5);
-        trade.timestamp = sqlite3_column_int64(stmt, 6);
-        const char* cp = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
-        trade.counterpartyOrderId = cp ? cp : "";
-        trades.push_back(trade);
+        trades.push_back(extractTrade(stmt));
     }
 
     sqlite3_finalize(stmt);
@@ -433,25 +430,15 @@ std::vector<StoredTrade> SqliteStore::loadTradesBySymbol(const std::string& symb
     )";
 
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return trades;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return trades;
+    }
 
     sqlite3_bind_text(stmt, 1, symbol.c_str(), -1, SQLITE_TRANSIENT);
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        StoredTrade trade;
-        const char* tradeId = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        const char* clOrdID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        const char* sym = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        trade.tradeId = tradeId ? tradeId : "";
-        trade.clOrdID = clOrdID ? clOrdID : "";
-        trade.symbol = sym ? sym : "";
-        trade.side = static_cast<OrderSide>(sqlite3_column_int(stmt, 3));
-        trade.price = sqlite3_column_double(stmt, 4);
-        trade.quantity = sqlite3_column_int64(stmt, 5);
-        trade.timestamp = sqlite3_column_int64(stmt, 6);
-        const char* cp = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
-        trade.counterpartyOrderId = cp ? cp : "";
-        trades.push_back(trade);
+        trades.push_back(extractTrade(stmt));
     }
 
     sqlite3_finalize(stmt);
@@ -472,7 +459,10 @@ bool SqliteStore::saveSessionState(const SessionState& state) {
     )";
 
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return false;
+    }
 
     sqlite3_bind_text(stmt, 1, state.senderCompID.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, state.targetCompID.c_str(), -1, SQLITE_TRANSIENT);
@@ -496,7 +486,10 @@ std::optional<SessionState> SqliteStore::loadSessionState(
     )";
 
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return std::nullopt;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return std::nullopt;
+    }
 
     sqlite3_bind_text(stmt, 1, senderCompID.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, targetCompID.c_str(), -1, SQLITE_TRANSIENT);
@@ -529,7 +522,10 @@ bool SqliteStore::saveMessage(const StoredMessage& msg) {
     )";
 
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return false;
+    }
 
     sqlite3_bind_int(stmt, 1, msg.seqNum);
     sqlite3_bind_text(stmt, 2, msg.senderCompID.c_str(), -1, SQLITE_TRANSIENT);
@@ -558,7 +554,10 @@ std::vector<StoredMessage> SqliteStore::loadMessages(
     )";
 
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return messages;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return messages;
+    }
 
     sqlite3_bind_text(stmt, 1, senderCompID.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, targetCompID.c_str(), -1, SQLITE_TRANSIENT);
@@ -586,7 +585,10 @@ bool SqliteStore::deleteMessagesOlderThan(int64_t timestamp) {
     const char* sql = "DELETE FROM messages WHERE timestamp < ?";
 
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return false;
+    }
 
     sqlite3_bind_int64(stmt, 1, timestamp);
 

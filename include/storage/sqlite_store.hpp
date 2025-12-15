@@ -71,6 +71,16 @@ private:
      */
     bool execute(const std::string& sql);
 
+    /**
+     * @brief 从 SQLite 结果行提取 Order 对象
+     */
+    Order extractOrder(sqlite3_stmt* stmt);
+
+    /**
+     * @brief 从 SQLite 结果行提取 StoredTrade 对象
+     */
+    StoredTrade extractTrade(sqlite3_stmt* stmt);
+
     sqlite3* db_ = nullptr;
     mutable std::mutex mutex_;
 };
