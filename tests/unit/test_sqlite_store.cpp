@@ -147,6 +147,18 @@ TEST_CASE("SqliteStore - 成交存储", "[storage]") {
     SqliteStore store(":memory:");
     REQUIRE(store.isOpen());
 
+    // 先创建订单（外键约束要求）
+    Order order;
+    order.clOrdID = "ORD001";
+    order.symbol = "IF2601";
+    order.side = OrderSide::BUY;
+    order.ordType = OrderType::LIMIT;
+    order.timeInForce = TimeInForce::DAY;
+    order.price = 4505.0;
+    order.orderQty = 10;
+    order.status = OrderStatus::NEW;
+    REQUIRE(store.saveOrder(order));
+
     StoredTrade trade;
     trade.tradeId = "TRD001";
     trade.clOrdID = "ORD001";

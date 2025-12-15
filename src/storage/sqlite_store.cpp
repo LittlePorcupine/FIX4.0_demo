@@ -34,6 +34,8 @@ SqliteStore::SqliteStore(const std::string& dbPath) {
     // 启用 WAL 模式提高并发性能
     execute("PRAGMA journal_mode=WAL");
     execute("PRAGMA synchronous=NORMAL");
+    // 启用外键约束
+    execute("PRAGMA foreign_keys=ON");
 
     if (!initTables()) {
         LOG() << "[SqliteStore] 初始化表失败";
@@ -147,10 +149,12 @@ bool SqliteStore::execute(const std::string& sql) {
 
 Order SqliteStore::extractOrder(sqlite3_stmt* stmt) {
     Order order;
-    order.clOrdID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    const char* clOrdID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
     const char* orderID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+    const char* symbol = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+    order.clOrdID = clOrdID ? clOrdID : "";
     order.orderID = orderID ? orderID : "";
-    order.symbol = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+    order.symbol = symbol ? symbol : "";
     order.side = static_cast<OrderSide>(sqlite3_column_int(stmt, 3));
     order.ordType = static_cast<OrderType>(sqlite3_column_int(stmt, 4));
     order.timeInForce = static_cast<TimeInForce>(sqlite3_column_int(stmt, 5));
@@ -241,7 +245,6 @@ bool SqliteStore::updateOrder(const Order& order) {
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
-        sqlite3_finalize(stmt);
         return false;
     }
 
@@ -274,7 +277,6 @@ std::optional<Order> SqliteStore::loadOrder(const std::string& clOrdID) {
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
-        sqlite3_finalize(stmt);
         return std::nullopt;
     }
 
@@ -303,7 +305,6 @@ std::vector<Order> SqliteStore::loadOrdersBySymbol(const std::string& symbol) {
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
         return orders;
     }
 
@@ -333,7 +334,6 @@ std::vector<Order> SqliteStore::loadActiveOrders() {
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
         return orders;
     }
 
@@ -358,7 +358,6 @@ std::vector<Order> SqliteStore::loadAllOrders() {
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
         return orders;
     }
 
@@ -386,7 +385,6 @@ bool SqliteStore::saveTrade(const StoredTrade& trade) {
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
         return false;
     }
 
@@ -418,7 +416,6 @@ std::vector<StoredTrade> SqliteStore::loadTradesByOrder(const std::string& clOrd
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
         return trades;
     }
 
@@ -445,7 +442,6 @@ std::vector<StoredTrade> SqliteStore::loadTradesBySymbol(const std::string& symb
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
         return trades;
     }
 
@@ -475,7 +471,6 @@ bool SqliteStore::saveSessionState(const SessionState& state) {
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
         return false;
     }
 
@@ -503,7 +498,6 @@ std::optional<SessionState> SqliteStore::loadSessionState(
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
         return std::nullopt;
     }
 
@@ -512,8 +506,10 @@ std::optional<SessionState> SqliteStore::loadSessionState(
 
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         SessionState state;
-        state.senderCompID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        state.targetCompID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        const char* sender = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        const char* target = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        state.senderCompID = sender ? sender : "";
+        state.targetCompID = target ? target : "";
         state.sendSeqNum = sqlite3_column_int(stmt, 2);
         state.recvSeqNum = sqlite3_column_int(stmt, 3);
         state.lastUpdateTime = sqlite3_column_int64(stmt, 4);
@@ -540,7 +536,6 @@ bool SqliteStore::saveMessage(const StoredMessage& msg) {
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
         return false;
     }
 
@@ -573,7 +568,6 @@ std::vector<StoredMessage> SqliteStore::loadMessages(
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
         return messages;
     }
 
@@ -585,10 +579,14 @@ std::vector<StoredMessage> SqliteStore::loadMessages(
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         StoredMessage msg;
         msg.seqNum = sqlite3_column_int(stmt, 0);
-        msg.senderCompID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        msg.targetCompID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        msg.msgType = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
-        msg.rawMessage = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        const char* sender = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        const char* target = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        const char* msgType = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        const char* rawMsg = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        msg.senderCompID = sender ? sender : "";
+        msg.targetCompID = target ? target : "";
+        msg.msgType = msgType ? msgType : "";
+        msg.rawMessage = rawMsg ? rawMsg : "";
         msg.timestamp = sqlite3_column_int64(stmt, 5);
         messages.push_back(msg);
     }
@@ -605,7 +603,6 @@ bool SqliteStore::deleteMessagesOlderThan(int64_t timestamp) {
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
         return false;
     }
 
