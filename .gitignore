@@ -16,6 +16,16 @@ build/
 # 测试构建产物
 tests/build/
 
+# SimNow 配置文件 (包含敏感信息)
+simnow.ini
+tests/ctp_test/simnow.ini
+tests/ctp_test/md_flow/
+tests/ctp_test/build/
+
+# CTP 流文件目录
+md_flow/
+ctp_md_flow/
+
 tests_legacy/
 
 build-coverage/
@@ -23,3 +33,5 @@ build-coverage/
 .cache/
 
 docs/
+
+ctp_test/
