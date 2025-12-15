@@ -39,6 +39,7 @@ SqliteStore::SqliteStore(const std::string& dbPath) {
         LOG() << "[SqliteStore] 初始化表失败";
         sqlite3_close(db_);
         db_ = nullptr;
+        return;
     }
 
     LOG() << "[SqliteStore] 数据库已打开: " << dbPath;
@@ -126,6 +127,10 @@ bool SqliteStore::initTables() {
 }
 
 bool SqliteStore::execute(const std::string& sql) {
+    if (!db_) {
+        LOG() << "[SqliteStore] SQL 执行失败: 数据库未打开";
+        return false;
+    }
     char* errMsg = nullptr;
     int rc = sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, &errMsg);
     if (rc != SQLITE_OK) {
@@ -181,6 +186,7 @@ StoredTrade SqliteStore::extractTrade(sqlite3_stmt* stmt) {
 
 bool SqliteStore::saveOrder(const Order& order) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return false;
     
     const char* sql = R"(
         INSERT INTO orders (cl_ord_id, order_id, symbol, side, order_type, time_in_force,
@@ -225,6 +231,7 @@ bool SqliteStore::saveOrder(const Order& order) {
 
 bool SqliteStore::updateOrder(const Order& order) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return false;
     
     const char* sql = R"(
         UPDATE orders SET cum_qty = ?, leaves_qty = ?, avg_px = ?, status = ?, update_time = ?
@@ -256,6 +263,7 @@ bool SqliteStore::updateOrder(const Order& order) {
 
 std::optional<Order> SqliteStore::loadOrder(const std::string& clOrdID) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return std::nullopt;
     
     const char* sql = R"(
         SELECT cl_ord_id, order_id, symbol, side, order_type, time_in_force,
@@ -285,6 +293,7 @@ std::optional<Order> SqliteStore::loadOrder(const std::string& clOrdID) {
 std::vector<Order> SqliteStore::loadOrdersBySymbol(const std::string& symbol) {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<Order> orders;
+    if (!db_) return orders;
     
     const char* sql = R"(
         SELECT cl_ord_id, order_id, symbol, side, order_type, time_in_force,
@@ -311,6 +320,7 @@ std::vector<Order> SqliteStore::loadOrdersBySymbol(const std::string& symbol) {
 std::vector<Order> SqliteStore::loadActiveOrders() {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<Order> orders;
+    if (!db_) return orders;
     
     // 使用枚举值构建 SQL，避免硬编码魔术数字
     std::string sql = R"(
@@ -338,6 +348,7 @@ std::vector<Order> SqliteStore::loadActiveOrders() {
 std::vector<Order> SqliteStore::loadAllOrders() {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<Order> orders;
+    if (!db_) return orders;
     
     const char* sql = R"(
         SELECT cl_ord_id, order_id, symbol, side, order_type, time_in_force,
@@ -365,6 +376,7 @@ std::vector<Order> SqliteStore::loadAllOrders() {
 
 bool SqliteStore::saveTrade(const StoredTrade& trade) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return false;
     
     const char* sql = R"(
         INSERT INTO trades (trade_id, cl_ord_id, symbol, side, price, quantity,
@@ -396,6 +408,7 @@ bool SqliteStore::saveTrade(const StoredTrade& trade) {
 std::vector<StoredTrade> SqliteStore::loadTradesByOrder(const std::string& clOrdID) {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<StoredTrade> trades;
+    if (!db_) return trades;
     
     const char* sql = R"(
         SELECT trade_id, cl_ord_id, symbol, side, price, quantity,
@@ -422,6 +435,7 @@ std::vector<StoredTrade> SqliteStore::loadTradesByOrder(const std::string& clOrd
 std::vector<StoredTrade> SqliteStore::loadTradesBySymbol(const std::string& symbol) {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<StoredTrade> trades;
+    if (!db_) return trades;
     
     const char* sql = R"(
         SELECT trade_id, cl_ord_id, symbol, side, price, quantity,
@@ -451,6 +465,7 @@ std::vector<StoredTrade> SqliteStore::loadTradesBySymbol(const std::string& symb
 
 bool SqliteStore::saveSessionState(const SessionState& state) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return false;
     
     const char* sql = R"(
         INSERT OR REPLACE INTO session_states 
@@ -479,6 +494,7 @@ bool SqliteStore::saveSessionState(const SessionState& state) {
 std::optional<SessionState> SqliteStore::loadSessionState(
     const std::string& senderCompID, const std::string& targetCompID) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return std::nullopt;
     
     const char* sql = R"(
         SELECT sender_comp_id, target_comp_id, send_seq_num, recv_seq_num, last_update_time
@@ -515,6 +531,7 @@ std::optional<SessionState> SqliteStore::loadSessionState(
 
 bool SqliteStore::saveMessage(const StoredMessage& msg) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return false;
     
     const char* sql = R"(
         INSERT INTO messages (seq_num, sender_comp_id, target_comp_id, msg_type, raw_message, timestamp)
@@ -545,6 +562,7 @@ std::vector<StoredMessage> SqliteStore::loadMessages(
     int beginSeqNum, int endSeqNum) {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<StoredMessage> messages;
+    if (!db_) return messages;
     
     const char* sql = R"(
         SELECT seq_num, sender_comp_id, target_comp_id, msg_type, raw_message, timestamp
@@ -581,6 +599,7 @@ std::vector<StoredMessage> SqliteStore::loadMessages(
 
 bool SqliteStore::deleteMessagesOlderThan(int64_t timestamp) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return false;
     
     const char* sql = "DELETE FROM messages WHERE timestamp < ?";
 
