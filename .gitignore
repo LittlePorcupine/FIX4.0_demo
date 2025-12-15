@@ -26,6 +26,11 @@ tests/ctp_test/build/
 md_flow/
 ctp_md_flow/
 
+# SQLite 数据库文件
+*.db
+*.sqlite
+data/
+
 tests_legacy/
 
 build-coverage/

@@ -11,6 +11,7 @@
 #include <sstream>
 #include <cstring>
 #include <cfloat>
+#include <filesystem>
 
 namespace fix40 {
 
@@ -123,8 +124,11 @@ bool CtpMdAdapter::start() {
 
     // 创建流文件目录
     if (!config_.flowPath.empty()) {
-        std::string cmd = "mkdir -p " + config_.flowPath;
-        system(cmd.c_str());
+        std::error_code ec;
+        std::filesystem::create_directories(config_.flowPath, ec);
+        if (ec) {
+            LOG() << "[CTP] 创建流文件目录失败: " << ec.message();
+        }
     }
 
     // 创建 API

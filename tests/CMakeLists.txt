@@ -21,6 +21,10 @@ endif()
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
+# SQLite 依赖
+find_package(SQLite3 REQUIRED)
+message(STATUS "SQLite3 found: ${SQLite3_VERSION}")
+
 # 创建测试库（复用主项目的源文件）
 add_library(fix_engine_test STATIC
     ../src/fix/session.cpp
@@ -32,8 +36,10 @@ add_library(fix_engine_test STATIC
     ../src/app/matching_engine.cpp
     ../src/app/order_book.cpp
     ../src/market/mock_md_adapter.cpp
+    ../src/storage/sqlite_store.cpp
 )
 target_include_directories(fix_engine_test PUBLIC ../include)
+target_link_libraries(fix_engine_test PUBLIC SQLite::SQLite3)
 
 # 链接 pthread
 if (UNIX)
@@ -53,6 +59,7 @@ add_executable(unit_tests
     unit/test_md_adapter.cpp
     unit/test_order_book.cpp
     unit/test_session_manager.cpp
+    unit/test_sqlite_store.cpp
 )
 
 target_link_libraries(unit_tests PRIVATE fix_engine_test)
