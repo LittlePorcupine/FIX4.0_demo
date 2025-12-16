@@ -201,13 +201,13 @@ if [ "$ORDER_COUNT" -lt "$EXPECTED_ORDERS" ]; then
 fi
 pass "Received $ORDER_COUNT NewOrderSingle messages"
 
-# 3. 跨客户端撮合 (AAPL)
-TRADE_COUNT=$(grep -c "Trade:" "$SERVER_LOG" || echo "0")
-if [ "$TRADE_COUNT" -lt 1 ]; then
-    fail "No trades occurred"
+# 3. 订单添加到挂单列表（行情驱动模式）
+PENDING_COUNT=$(grep -c "added to pending orders" "$SERVER_LOG" || echo "0")
+if [ "$PENDING_COUNT" -lt 1 ]; then
+    fail "No orders added to pending orders"
 fi
-pass "Trades executed: $TRADE_COUNT"
-info "Cross-client matching verified"
+pass "Orders added to pending orders: $PENDING_COUNT"
+info "Market-driven mode: orders waiting for market data to trigger matching"
 
 # 4. 撤单请求处理
 if ! grep -q "Received business message: MsgType=F" "$SERVER_LOG"; then
@@ -222,17 +222,18 @@ if [ "$ER_COUNT" -lt 5 ]; then
 fi
 pass "ExecutionReports sent: $ER_COUNT"
 
-# 6. 验证各种订单状态
+# 6. 验证各种订单状态（行情驱动模式下主要是 New 和 Canceled）
 FOUND_STATUSES=""
 if grep -q "OrdStatus=0" "$SERVER_LOG"; then
     FOUND_STATUSES="${FOUND_STATUSES}New "
 fi
-if grep -q "OrdStatus=1" "$SERVER_LOG"; then
-    FOUND_STATUSES="${FOUND_STATUSES}PartialFill "
-fi
-if grep -q "OrdStatus=2" "$SERVER_LOG"; then
-    FOUND_STATUSES="${FOUND_STATUSES}Fill "
-fi
+# 行情驱动模式下，没有行情数据时不会有成交
+# if grep -q "OrdStatus=1" "$SERVER_LOG"; then
+#     FOUND_STATUSES="${FOUND_STATUSES}PartialFill "
+# fi
+# if grep -q "OrdStatus=2" "$SERVER_LOG"; then
+#     FOUND_STATUSES="${FOUND_STATUSES}Fill "
+# fi
 if grep -q "OrdStatus=4" "$SERVER_LOG"; then
     FOUND_STATUSES="${FOUND_STATUSES}Canceled "
 fi

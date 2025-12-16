@@ -60,6 +60,10 @@ set(FIX_ENGINE_SOURCES
     src/app/simulation_app.cpp
     src/app/matching_engine.cpp
     src/app/order_book.cpp
+    src/app/account_manager.cpp
+    src/app/position_manager.cpp
+    src/app/instrument_manager.cpp
+    src/app/risk_manager.cpp
     src/market/mock_md_adapter.cpp
     src/storage/sqlite_store.cpp
 )

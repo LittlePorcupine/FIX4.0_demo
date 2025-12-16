@@ -174,19 +174,18 @@ if [ "$ORDER_COUNT" -lt 3 ]; then
 fi
 pass "Received $ORDER_COUNT NewOrderSingle messages"
 
-# 3. 订单添加到订单簿
-if ! grep -q "added to bids\|added to asks" "$SERVER_LOG"; then
-    fail "Orders not added to OrderBook"
+# 3. 订单添加到挂单列表（行情驱动模式）
+if ! grep -q "added to pending orders" "$SERVER_LOG"; then
+    fail "Orders not added to pending orders"
 fi
-pass "Orders added to OrderBook"
+pass "Orders added to pending orders (market-driven mode)"
 
-# 4. AAPL 撮合
-if grep -q "Trade:.*AAPL" "$SERVER_LOG"; then
-    MATCH_LOG=$(grep "Trade:.*AAPL" "$SERVER_LOG" | head -1)
-    pass "AAPL orders matched"
-    info "Match: $MATCH_LOG"
+# 4. 订单确认（行情驱动模式下，订单等待行情触发撮合）
+# 注意：在行情驱动模式下，没有行情数据时订单不会自动撮合
+if grep -q "acknowledged, pending for market data" "$SERVER_LOG"; then
+    pass "Orders acknowledged and pending for market data"
 else
-    fail "AAPL orders did not match"
+    fail "Orders not acknowledged"
 fi
 
 # 5. 收到撤单请求
@@ -196,6 +195,7 @@ fi
 pass "CancelRequest received"
 
 # 6. ExecutionReport 发送
+# 行情驱动模式下：3个订单确认 + 1个撤单确认 = 4个 ExecutionReport
 ER_COUNT=$(grep -c "Sending ExecutionReport" "$SERVER_LOG" || echo "0")
 if [ "$ER_COUNT" -lt 4 ]; then
     fail "Expected at least 4 ExecutionReports, got $ER_COUNT"
@@ -204,11 +204,12 @@ pass "ExecutionReports sent: $ER_COUNT"
 
 # 7. 验证各种订单状态
 if grep -q "OrdStatus=0" "$SERVER_LOG"; then
-    pass "Found OrdStatus=New (0)"
+    pass "Found OrdStatus=New (0) - orders pending for market data"
 fi
-if grep -q "OrdStatus=1\|OrdStatus=2" "$SERVER_LOG"; then
-    pass "Found OrdStatus=Fill (1 or 2)"
-fi
+# 注意：行情驱动模式下，没有行情数据时不会有成交
+# if grep -q "OrdStatus=1\|OrdStatus=2" "$SERVER_LOG"; then
+#     pass "Found OrdStatus=Fill (1 or 2)"
+# fi
 if grep -q "OrdStatus=4" "$SERVER_LOG"; then
     pass "Found OrdStatus=Canceled (4)"
 fi
