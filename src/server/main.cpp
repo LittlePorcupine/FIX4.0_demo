@@ -9,6 +9,7 @@
 #include "base/config.hpp"
 #include "base/logger.hpp"
 #include "app/simulation_app.hpp"
+#include "app/instrument.hpp"
 #include <iostream>
 #include <csignal>
 #include <filesystem>
@@ -51,8 +52,30 @@ int main(int argc, char* argv[]) {
             port = std::stoi(argv[2]);
         }
         
-        // 创建模拟交易应用层并启动撮合引擎
+        // 创建模拟交易应用层
         fix40::SimulationApp app;
+        
+        // 注册默认测试合约
+        // TODO: 后续从配置文件加载合约信息
+        auto& instrumentMgr = app.getInstrumentManager();
+        
+        // 股指期货合约
+        instrumentMgr.addInstrument(fix40::Instrument("IF2601", "CFFEX", "IF", 0.2, 300, 0.12));
+        instrumentMgr.addInstrument(fix40::Instrument("IC2601", "CFFEX", "IC", 0.2, 200, 0.12));
+        instrumentMgr.addInstrument(fix40::Instrument("IH2601", "CFFEX", "IH", 0.2, 300, 0.12));
+        
+        // 测试用股票合约（简化处理，使用1:1乘数）
+        fix40::Instrument aapl("AAPL", "NASDAQ", "AAPL", 0.01, 1, 1.0);
+        aapl.updateLimitPrices(200.0, 100.0);  // 设置涨跌停价
+        instrumentMgr.addInstrument(aapl);
+        
+        fix40::Instrument tsla("TSLA", "NASDAQ", "TSLA", 0.01, 1, 1.0);
+        tsla.updateLimitPrices(300.0, 200.0);
+        instrumentMgr.addInstrument(tsla);
+        
+        LOG() << "Registered " << instrumentMgr.size() << " instruments";
+        
+        // 启动撮合引擎
         app.start();
         
         fix40::FixServer server(port, num_threads, &app);
