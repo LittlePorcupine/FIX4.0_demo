@@ -5,7 +5,7 @@
  * 实现订单风控检查功能。
  */
 
-#include "app/risk_manager.hpp"
+#include "app/manager/risk_manager.hpp"
 #include <sstream>
 
 namespace fix40 {

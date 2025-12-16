@@ -2,8 +2,8 @@
 #include <rapidcheck.h>
 #include <rapidcheck/catch.h>
 #include "storage/sqlite_store.hpp"
-#include "app/account.hpp"
-#include "app/position.hpp"
+#include "app/model/account.hpp"
+#include "app/model/position.hpp"
 #include <filesystem>
 #include <cmath>
 

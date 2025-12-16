@@ -3,7 +3,7 @@
  * @brief 合约信息管理模块实现
  */
 
-#include "app/instrument_manager.hpp"
+#include "app/manager/instrument_manager.hpp"
 #include <fstream>
 #include <sstream>
 #include <stdexcept>

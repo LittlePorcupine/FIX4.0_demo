@@ -11,7 +11,7 @@
  */
 
 #include "app/simulation_app.hpp"
-#include "app/fix_message_builder.hpp"
+#include "fix/fix_message_builder.hpp"
 #include "fix/fix_tags.hpp"
 #include "base/logger.hpp"
 #include "storage/store.hpp"

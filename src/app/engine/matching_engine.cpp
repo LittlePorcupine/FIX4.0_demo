@@ -5,11 +5,11 @@
  * 实现行情驱动撮合模式：用户订单与CTP行情盘口比对撮合。
  */
 
-#include "app/matching_engine.hpp"
-#include "app/risk_manager.hpp"
-#include "app/account_manager.hpp"
-#include "app/position_manager.hpp"
-#include "app/instrument_manager.hpp"
+#include "app/engine/matching_engine.hpp"
+#include "app/manager/risk_manager.hpp"
+#include "app/manager/account_manager.hpp"
+#include "app/manager/position_manager.hpp"
+#include "app/manager/instrument_manager.hpp"
 #include "base/logger.hpp"
 #include <sstream>
 #include <iomanip>

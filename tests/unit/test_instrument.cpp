@@ -8,7 +8,7 @@
 #include "../catch2/catch.hpp"
 #include <rapidcheck.h>
 #include <rapidcheck/catch.h>
-#include "app/instrument.hpp"
+#include "app/model/instrument.hpp"
 #include <cmath>
 
 using namespace fix40;

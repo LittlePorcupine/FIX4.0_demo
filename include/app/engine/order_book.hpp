@@ -13,7 +13,7 @@
 #include <vector>
 #include <functional>
 #include <optional>
-#include "app/order.hpp"
+#include "app/model/order.hpp"
 
 namespace fix40 {
 

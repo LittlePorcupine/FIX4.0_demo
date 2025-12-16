@@ -11,9 +11,9 @@
 #include <vector>
 #include <optional>
 #include <cstdint>
-#include "app/order.hpp"
-#include "app/account.hpp"
-#include "app/position.hpp"
+#include "app/model/order.hpp"
+#include "app/model/account.hpp"
+#include "app/model/position.hpp"
 
 namespace fix40 {
 

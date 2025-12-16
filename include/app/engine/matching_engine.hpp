@@ -15,9 +15,9 @@
 #include <list>
 #include <memory>
 #include "base/blockingconcurrentqueue.h"
-#include "app/order_event.hpp"
-#include "app/order_book.hpp"
-#include "app/market_data_snapshot.hpp"
+#include "app/engine/order_event.hpp"
+#include "app/engine/order_book.hpp"
+#include "app/model/market_data_snapshot.hpp"
 #include "market/market_data.hpp"
 
 namespace fix40 {

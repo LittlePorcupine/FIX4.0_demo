@@ -50,12 +50,12 @@ add_library(fix_engine_test STATIC
     ../src/fix/fix_frame_decoder.cpp
     ../src/base/config.cpp
     ../src/app/simulation_app.cpp
-    ../src/app/matching_engine.cpp
-    ../src/app/order_book.cpp
-    ../src/app/instrument_manager.cpp
-    ../src/app/account_manager.cpp
-    ../src/app/position_manager.cpp
-    ../src/app/risk_manager.cpp
+    ../src/app/engine/matching_engine.cpp
+    ../src/app/engine/order_book.cpp
+    ../src/app/manager/instrument_manager.cpp
+    ../src/app/manager/account_manager.cpp
+    ../src/app/manager/position_manager.cpp
+    ../src/app/manager/risk_manager.cpp
     ../src/market/mock_md_adapter.cpp
     ../src/storage/sqlite_store.cpp
 )

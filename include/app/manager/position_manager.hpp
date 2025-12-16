@@ -13,9 +13,9 @@
 #include <optional>
 #include <mutex>
 #include <vector>
-#include "app/position.hpp"
-#include "app/order.hpp"
-#include "app/market_data_snapshot.hpp"
+#include "app/model/position.hpp"
+#include "app/model/order.hpp"
+#include "app/model/market_data_snapshot.hpp"
 
 namespace fix40 {
 
