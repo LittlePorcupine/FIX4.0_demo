@@ -37,20 +37,29 @@ const char* tifToString(TimeInForce tif) {
     }
 }
 
-const char* statusToString(OrderStatus status) {
-    switch (status) {
-        case OrderStatus::PENDING_NEW: return "PendingNew";
-        case OrderStatus::NEW: return "New";
-        case OrderStatus::PARTIALLY_FILLED: return "PartiallyFilled";
-        case OrderStatus::FILLED: return "Filled";
-        case OrderStatus::CANCELED: return "Canceled";
-        case OrderStatus::PENDING_CANCEL: return "PendingCancel";
-        case OrderStatus::REJECTED: return "Rejected";
-        default: return "Unknown";
-    }
-}
-
 } // anonymous namespace
+
+// =============================================================================
+// 辅助函数：构建拒绝单 ExecutionReport
+// =============================================================================
+
+ExecutionReport buildRejectReport(const Order& order, RejectReason reason, const std::string& text) {
+    ExecutionReport report;
+    report.orderID = order.orderID;
+    report.clOrdID = order.clOrdID;
+    report.execID = "";  // 调用方需要设置
+    report.symbol = order.symbol;
+    report.side = order.side;
+    report.orderQty = order.orderQty;
+    report.price = order.price;
+    report.ordType = order.ordType;
+    report.ordStatus = OrderStatus::REJECTED;
+    report.ordRejReason = static_cast<int>(reason);
+    report.text = text;
+    report.transactTime = std::chrono::system_clock::now();
+    report.execTransType = ExecTransType::NEW;
+    return report;
+}
 
 MatchingEngine::MatchingEngine() = default;
 
@@ -210,20 +219,8 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
             LOG() << "[MatchingEngine] Order rejected: instrument " << order.symbol << " not found";
             order.status = OrderStatus::REJECTED;
             
-            ExecutionReport report;
-            report.orderID = order.orderID;
-            report.clOrdID = order.clOrdID;
+            auto report = buildRejectReport(order, RejectReason::INSTRUMENT_NOT_FOUND, "Instrument not found");
             report.execID = generateExecID();
-            report.symbol = order.symbol;
-            report.side = order.side;
-            report.orderQty = order.orderQty;
-            report.price = order.price;
-            report.ordType = order.ordType;
-            report.ordStatus = OrderStatus::REJECTED;
-            report.ordRejReason = static_cast<int>(RejectReason::INSTRUMENT_NOT_FOUND);
-            report.text = "Instrument not found";
-            report.transactTime = std::chrono::system_clock::now();
-            report.execTransType = ExecTransType::NEW;
             
             sendExecutionReport(event.sessionID, report);
             orderSessionMap_.erase(order.clOrdID);
@@ -240,20 +237,8 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
             LOG() << "[MatchingEngine] Order rejected by risk check: " << checkResult.rejectText;
             order.status = OrderStatus::REJECTED;
             
-            ExecutionReport report;
-            report.orderID = order.orderID;
-            report.clOrdID = order.clOrdID;
+            auto report = buildRejectReport(order, checkResult.rejectReason, checkResult.rejectText);
             report.execID = generateExecID();
-            report.symbol = order.symbol;
-            report.side = order.side;
-            report.orderQty = order.orderQty;
-            report.price = order.price;
-            report.ordType = order.ordType;
-            report.ordStatus = OrderStatus::REJECTED;
-            report.ordRejReason = static_cast<int>(checkResult.rejectReason);
-            report.text = checkResult.rejectText;
-            report.transactTime = std::chrono::system_clock::now();
-            report.execTransType = ExecTransType::NEW;
             
             sendExecutionReport(event.sessionID, report);
             orderSessionMap_.erase(order.clOrdID);
@@ -261,6 +246,23 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
         }
         
         LOG() << "[MatchingEngine] Risk check passed for order " << order.clOrdID;
+        
+        // 冻结保证金（下单时冻结，成交时确认）
+        double estimatedPrice = order.price > 0 ? order.price : snapshot.lastPrice;
+        double marginToFreeze = estimatedPrice * order.orderQty * instrument.volumeMultiple * instrument.marginRate;
+        if (!accountManager_->freezeMargin(accountId, marginToFreeze)) {
+            LOG() << "[MatchingEngine] Order rejected: insufficient margin to freeze";
+            order.status = OrderStatus::REJECTED;
+            
+            auto report = buildRejectReport(order, RejectReason::INSUFFICIENT_FUNDS, "Insufficient margin");
+            report.execID = generateExecID();
+            
+            sendExecutionReport(event.sessionID, report);
+            orderSessionMap_.erase(order.clOrdID);
+            return;
+        }
+        
+        LOG() << "[MatchingEngine] Margin frozen for order " << order.clOrdID << ": " << marginToFreeze;
     }
     
     // 尝试立即撮合
@@ -278,20 +280,8 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
                 LOG() << "[MatchingEngine] Market order rejected: no ask side";
                 order.status = OrderStatus::REJECTED;
                 
-                ExecutionReport report;
-                report.orderID = order.orderID;
-                report.clOrdID = order.clOrdID;
+                auto report = buildRejectReport(order, RejectReason::NO_COUNTER_PARTY, "No counter party (ask side empty)");
                 report.execID = generateExecID();
-                report.symbol = order.symbol;
-                report.side = order.side;
-                report.orderQty = order.orderQty;
-                report.price = order.price;
-                report.ordType = order.ordType;
-                report.ordStatus = OrderStatus::REJECTED;
-                report.ordRejReason = static_cast<int>(RejectReason::NO_COUNTER_PARTY);
-                report.text = "No counter party (ask side empty)";
-                report.transactTime = std::chrono::system_clock::now();
-                report.execTransType = ExecTransType::NEW;
                 
                 sendExecutionReport(event.sessionID, report);
                 orderSessionMap_.erase(order.clOrdID);
@@ -306,20 +296,8 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
                 LOG() << "[MatchingEngine] Market order rejected: no bid side";
                 order.status = OrderStatus::REJECTED;
                 
-                ExecutionReport report;
-                report.orderID = order.orderID;
-                report.clOrdID = order.clOrdID;
+                auto report = buildRejectReport(order, RejectReason::NO_COUNTER_PARTY, "No counter party (bid side empty)");
                 report.execID = generateExecID();
-                report.symbol = order.symbol;
-                report.side = order.side;
-                report.orderQty = order.orderQty;
-                report.price = order.price;
-                report.ordType = order.ordType;
-                report.ordStatus = OrderStatus::REJECTED;
-                report.ordRejReason = static_cast<int>(RejectReason::NO_COUNTER_PARTY);
-                report.text = "No counter party (bid side empty)";
-                report.transactTime = std::chrono::system_clock::now();
-                report.execTransType = ExecTransType::NEW;
                 
                 sendExecutionReport(event.sessionID, report);
                 orderSessionMap_.erase(order.clOrdID);
@@ -622,14 +600,18 @@ bool MatchingEngine::canMatchSellOrder(const Order& order, const MarketDataSnaps
 }
 
 void MatchingEngine::executeFill(Order& order, double fillPrice, int64_t fillQty) {
+    // 计算加权平均成交价（在更新cumQty之前计算）
+    int64_t prevCumQty = order.cumQty;
+    double prevAvgPx = order.avgPx;
+    
     // 更新订单状态
     order.cumQty += fillQty;
     order.leavesQty = order.orderQty - order.cumQty;
     
-    // 计算平均成交价
+    // 计算加权平均成交价
     if (order.cumQty > 0) {
-        // 简化处理：假设单次全部成交
-        order.avgPx = fillPrice;
+        // 加权平均：(旧均价 * 旧数量 + 新价格 * 新数量) / 总数量
+        order.avgPx = (prevAvgPx * prevCumQty + fillPrice * fillQty) / order.cumQty;
     }
     
     // 更新订单状态
@@ -657,8 +639,12 @@ void MatchingEngine::executeFill(Order& order, double fillPrice, int64_t fillQty
             int volumeMultiple = instPtr->volumeMultiple;
             double marginRate = instPtr->marginRate;
             
-            // 计算保证金
-            double margin = fillPrice * fillQty * volumeMultiple * marginRate;
+            // 计算实际成交保证金
+            double actualMargin = fillPrice * fillQty * volumeMultiple * marginRate;
+            
+            // 计算下单时冻结的保证金（使用订单价格或估算价格）
+            double estimatedPrice = order.price > 0 ? order.price : fillPrice;
+            double frozenMargin = estimatedPrice * fillQty * volumeMultiple * marginRate;
             
             // 假设是开仓（简化处理）
             // 实际应用中需要根据订单的开平标志来判断
@@ -670,19 +656,21 @@ void MatchingEngine::executeFill(Order& order, double fillPrice, int64_t fillQty
                 order.side, 
                 fillQty, 
                 fillPrice, 
-                margin
+                actualMargin
             );
             
             // 确认保证金（冻结转占用）
-            // 注意：这里假设之前已经冻结了保证金
-            // 实际应用中需要在下单时冻结，成交时确认
-            accountManager_->confirmMargin(accountId, margin, margin);
+            // frozenMargin: 下单时冻结的金额
+            // actualMargin: 实际成交占用的金额
+            // 差额会返还到可用资金
+            accountManager_->confirmMargin(accountId, frozenMargin, actualMargin);
             
             LOG() << "[MatchingEngine] Position updated for " << accountId 
                   << ": " << order.symbol 
                   << " " << (order.side == OrderSide::BUY ? "LONG" : "SHORT")
                   << " " << fillQty << " @ " << fillPrice
-                  << ", margin=" << margin;
+                  << ", frozenMargin=" << frozenMargin
+                  << ", actualMargin=" << actualMargin;
         }
     }
     

@@ -203,7 +203,8 @@ TEST_CASE("MatchingEngine - 市价单撮合条件", "[matching_engine]") {
  * 当买价 < 卖一价时应挂单等待。卖单同理。
  */
 TEST_CASE("Property 2: 限价单撮合正确性", "[matching_engine][property]") {
-    MatchingEngine engine;
+    // 注意：属性测试中每次迭代都创建新的 engine 实例，
+    // 因此这里不需要外部 engine 变量
     
     rc::prop("买单：买价 >= 卖一价 当且仅当 可成交",
         []() {
