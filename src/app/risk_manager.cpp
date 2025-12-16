@@ -173,9 +173,17 @@ double RiskManager::calculateRequiredMargin(
         if (order.side == OrderSide::BUY) {
             // 买单使用涨停价
             price = instrument.upperLimitPrice;
+            // 如果涨停价未设置，使用昨结算价
+            if (price <= 0) {
+                price = instrument.preSettlementPrice;
+            }
         } else {
             // 卖单使用跌停价
             price = instrument.lowerLimitPrice;
+            // 如果跌停价未设置，使用昨结算价
+            if (price <= 0) {
+                price = instrument.preSettlementPrice;
+            }
         }
     }
     

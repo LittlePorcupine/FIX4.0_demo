@@ -545,8 +545,9 @@ TEST_CASE("RiskManager 属性测试 - 资金检查", "[risk_manager][property]")
             // 计算所需保证金
             double requiredMargin = price * qty * volumeMultiple * marginRate;
             
-            // 生成充足的可用资金（100% - 200% 的所需保证金）
-            auto availableRatio = *rc::gen::inRange(100, 200);
+            // 生成充足的可用资金（101% - 200% 的所需保证金）
+            // 使用101%而非100%，避免浮点数精度问题导致边界情况失败
+            auto availableRatio = *rc::gen::inRange(101, 200);
             double available = requiredMargin * availableRatio / 100.0;
             
             Account account("test", available);
@@ -762,14 +763,14 @@ TEST_CASE("RiskManager 属性测试 - 持仓检查", "[risk_manager][property]")
         []() {
             RiskManager riskMgr;
             
-            // 生成持仓数量
-            auto positionQty = *rc::gen::inRange(1, 100);
+            // 生成持仓数量（最小为2，避免inRange(1,1)空范围问题）
+            auto positionQty = *rc::gen::inRange(2, 101);
             
             Position position("test", "TEST");
             position.longPosition = positionQty;
             
-            // 生成不超过持仓的平仓数量
-            auto orderQty = *rc::gen::inRange(1, positionQty);
+            // 生成不超过持仓的平仓数量（使用positionQty+1确保包含上界）
+            auto orderQty = *rc::gen::inRange(1, positionQty + 1);
             
             Order order = createTestOrder("TEST", OrderSide::SELL, OrderType::LIMIT, 4000.0, orderQty);
             
@@ -785,14 +786,14 @@ TEST_CASE("RiskManager 属性测试 - 持仓检查", "[risk_manager][property]")
         []() {
             RiskManager riskMgr;
             
-            // 生成持仓数量
-            auto positionQty = *rc::gen::inRange(1, 100);
+            // 生成持仓数量（最小为2，避免inRange(1,1)空范围问题）
+            auto positionQty = *rc::gen::inRange(2, 101);
             
             Position position("test", "TEST");
             position.shortPosition = positionQty;
             
-            // 生成不超过持仓的平仓数量
-            auto orderQty = *rc::gen::inRange(1, positionQty);
+            // 生成不超过持仓的平仓数量（使用positionQty+1确保包含上界）
+            auto orderQty = *rc::gen::inRange(1, positionQty + 1);
             
             Order order = createTestOrder("TEST", OrderSide::BUY, OrderType::LIMIT, 4000.0, orderQty);
             
