@@ -8,7 +8,7 @@
 #include "../catch2/catch.hpp"
 #include <rapidcheck.h>
 #include <rapidcheck/catch.h>
-#include "app/position_manager.hpp"
+#include "app/manager/position_manager.hpp"
 #include <cmath>
 
 using namespace fix40;

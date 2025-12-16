@@ -6,7 +6,7 @@
  */
 
 #include "../catch2/catch.hpp"
-#include "app/instrument_manager.hpp"
+#include "app/manager/instrument_manager.hpp"
 #include <fstream>
 #include <cstdio>
 #include <random>

@@ -13,9 +13,9 @@
 #include "../catch2/catch.hpp"
 #include <rapidcheck.h>
 #include <rapidcheck/catch.h>
-#include "app/matching_engine.hpp"
-#include "app/market_data_snapshot.hpp"
-#include "app/order.hpp"
+#include "app/engine/matching_engine.hpp"
+#include "app/model/market_data_snapshot.hpp"
+#include "app/model/order.hpp"
 #include "market/market_data.hpp"
 
 using namespace fix40;

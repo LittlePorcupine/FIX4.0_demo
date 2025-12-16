@@ -17,11 +17,11 @@
 
 #include "fix/application.hpp"
 #include "fix/session_manager.hpp"
-#include "app/matching_engine.hpp"
-#include "app/account_manager.hpp"
-#include "app/position_manager.hpp"
-#include "app/instrument_manager.hpp"
-#include "app/risk_manager.hpp"
+#include "app/engine/matching_engine.hpp"
+#include "app/manager/account_manager.hpp"
+#include "app/manager/position_manager.hpp"
+#include "app/manager/instrument_manager.hpp"
+#include "app/manager/risk_manager.hpp"
 #include <memory>
 #include <unordered_map>
 #include <mutex>

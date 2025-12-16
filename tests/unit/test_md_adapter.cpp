@@ -3,7 +3,7 @@
 #include <rapidcheck/catch.h>
 #include "market/market_data.hpp"
 #include "market/mock_md_adapter.hpp"
-#include "app/market_data_snapshot.hpp"
+#include "app/model/market_data_snapshot.hpp"
 #include <thread>
 #include <chrono>
 #include <cmath>

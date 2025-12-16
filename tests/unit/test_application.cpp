@@ -5,8 +5,8 @@
 #include "fix/fix_tags.hpp"
 #include "fix/fix_messages.hpp"
 #include "app/simulation_app.hpp"
-#include "app/matching_engine.hpp"
-#include "app/order.hpp"
+#include "app/engine/matching_engine.hpp"
+#include "app/model/order.hpp"
 #include "market/market_data.hpp"
 
 using namespace fix40;
@@ -618,14 +618,14 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
 
 #include <rapidcheck.h>
 #include <rapidcheck/catch.h>
-#include "app/fix_message_builder.hpp"
-#include "app/instrument.hpp"
-#include "app/account.hpp"
-#include "app/position.hpp"
-#include "app/risk_manager.hpp"
-#include "app/account_manager.hpp"
-#include "app/position_manager.hpp"
-#include "app/instrument_manager.hpp"
+#include "fix/fix_message_builder.hpp"
+#include "app/model/instrument.hpp"
+#include "app/model/account.hpp"
+#include "app/model/position.hpp"
+#include "app/manager/risk_manager.hpp"
+#include "app/manager/account_manager.hpp"
+#include "app/manager/position_manager.hpp"
+#include "app/manager/instrument_manager.hpp"
 
 namespace {
 

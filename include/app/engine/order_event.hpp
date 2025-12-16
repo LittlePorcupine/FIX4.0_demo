@@ -10,7 +10,7 @@
 
 #include <string>
 #include <variant>
-#include "app/order.hpp"
+#include "app/model/order.hpp"
 
 namespace fix40 {
 

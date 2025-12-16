@@ -10,11 +10,11 @@
 
 #include <string>
 #include <cstdint>
-#include "app/order.hpp"
-#include "app/account.hpp"
-#include "app/position.hpp"
-#include "app/instrument.hpp"
-#include "app/market_data_snapshot.hpp"
+#include "app/model/order.hpp"
+#include "app/model/account.hpp"
+#include "app/model/position.hpp"
+#include "app/model/instrument.hpp"
+#include "app/model/market_data_snapshot.hpp"
 
 namespace fix40 {
 

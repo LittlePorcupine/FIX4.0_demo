@@ -8,7 +8,7 @@
 #include "../catch2/catch.hpp"
 #include <rapidcheck.h>
 #include <rapidcheck/catch.h>
-#include "app/risk_manager.hpp"
+#include "app/manager/risk_manager.hpp"
 #include <cmath>
 
 using namespace fix40;

@@ -9,7 +9,7 @@
 
 #include "fix/fix_codec.hpp"
 #include "fix/fix_tags.hpp"
-#include "app/order.hpp"
+#include "app/model/order.hpp"
 #include <sstream>
 #include <iomanip>
 #include <ctime>

@@ -8,7 +8,7 @@
 #include "../catch2/catch.hpp"
 #include <rapidcheck.h>
 #include <rapidcheck/catch.h>
-#include "app/account.hpp"
+#include "app/model/account.hpp"
 
 using namespace fix40;
 

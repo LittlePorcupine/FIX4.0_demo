@@ -9,7 +9,7 @@
 #include "base/config.hpp"
 #include "base/logger.hpp"
 #include "app/simulation_app.hpp"
-#include "app/instrument.hpp"
+#include "app/model/instrument.hpp"
 #include <iostream>
 #include <csignal>
 #include <filesystem>

@@ -13,7 +13,7 @@
 #include <optional>
 #include <mutex>
 #include <vector>
-#include "app/instrument.hpp"
+#include "app/model/instrument.hpp"
 
 namespace fix40 {
 
