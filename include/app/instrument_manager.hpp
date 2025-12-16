@@ -100,6 +100,9 @@ public:
      * 手动添加合约信息，主要用于测试。
      *
      * @param instrument 合约信息
+     *
+     * @note 如果合约ID已存在，将覆盖原有合约信息，不会发出警告。
+     *       这是设计意图，允许更新合约参数（如保证金率变化）。
      */
     void addInstrument(const Instrument& instrument);
 
@@ -107,6 +110,8 @@ public:
      * @brief 批量添加合约
      *
      * @param instruments 合约列表
+     *
+     * @note 如果合约ID已存在，将覆盖原有合约信息，不会发出警告。
      */
     void addInstruments(const std::vector<Instrument>& instruments);
 

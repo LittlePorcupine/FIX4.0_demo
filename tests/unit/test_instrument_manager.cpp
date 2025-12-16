@@ -9,6 +9,10 @@
 #include "app/instrument_manager.hpp"
 #include <fstream>
 #include <cstdio>
+#include <random>
+#include <chrono>
+#include <sstream>
+#include <iomanip>
 
 using namespace fix40;
 
@@ -18,9 +22,21 @@ using namespace fix40;
 
 /**
  * @brief 创建临时配置文件
+ *
+ * 使用 std::random_device 和时间戳生成唯一文件名，
+ * 确保并行测试时不会发生文件名冲突。
  */
 std::string createTempConfigFile(const std::string& content) {
-    std::string filename = "test_instruments_" + std::to_string(std::rand()) + ".json";
+    // 使用随机设备和时间戳组合生成唯一文件名
+    std::random_device rd;
+    auto now = std::chrono::high_resolution_clock::now();
+    auto timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        now.time_since_epoch()).count();
+    
+    std::ostringstream oss;
+    oss << "test_instruments_" << timestamp << "_" << rd() << ".json";
+    std::string filename = oss.str();
+    
     std::ofstream file(filename);
     file << content;
     file.close();

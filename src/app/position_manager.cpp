@@ -151,6 +151,9 @@ double PositionManager::closePosition(const std::string& accountId,
         // 盈亏 = (平仓价 - 持仓均价) × 平仓量 × 合约乘数
         profit = (price - pos.longAvgPrice) * volume * volumeMultiple;
         
+        // 计算平仓前的持仓量，用于按比例计算保证金释放
+        int64_t originalPosition = pos.longPosition;
+        
         // 减少持仓
         pos.longPosition -= volume;
         if (pos.longPosition <= 0) {
@@ -158,13 +161,17 @@ double PositionManager::closePosition(const std::string& accountId,
             pos.longAvgPrice = 0.0;
             pos.longMargin = 0.0;
         } else {
-            // 按比例减少保证金
-            // 这里简化处理，实际应该根据成交价重新计算
+            // 按比例减少保证金：释放的保证金 = 原保证金 × (平仓量 / 原持仓量)
+            double marginToRelease = pos.longMargin * (static_cast<double>(volume) / originalPosition);
+            pos.longMargin -= marginToRelease;
         }
     } else {
         // 平空头（买入平仓）
         // 盈亏 = (持仓均价 - 平仓价) × 平仓量 × 合约乘数
         profit = (pos.shortAvgPrice - price) * volume * volumeMultiple;
+        
+        // 计算平仓前的持仓量，用于按比例计算保证金释放
+        int64_t originalPosition = pos.shortPosition;
         
         // 减少持仓
         pos.shortPosition -= volume;
@@ -172,6 +179,10 @@ double PositionManager::closePosition(const std::string& accountId,
             pos.shortPosition = 0;
             pos.shortAvgPrice = 0.0;
             pos.shortMargin = 0.0;
+        } else {
+            // 按比例减少保证金：释放的保证金 = 原保证金 × (平仓量 / 原持仓量)
+            double marginToRelease = pos.shortMargin * (static_cast<double>(volume) / originalPosition);
+            pos.shortMargin -= marginToRelease;
         }
     }
     

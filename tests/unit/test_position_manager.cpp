@@ -83,6 +83,57 @@ TEST_CASE("PositionManager closePosition 平多头", "[position_manager][unit]")
     REQUIRE(pos->longPosition == 1);
 }
 
+TEST_CASE("PositionManager closePosition 部分平仓保证金按比例减少", "[position_manager][unit]") {
+    PositionManager mgr;
+    
+    SECTION("多头部分平仓") {
+        // 开仓：4手 @ 4000，保证金 480000
+        mgr.openPosition("user001", "IF2601", OrderSide::BUY, 4, 4000.0, 480000.0);
+        
+        // 平仓：1手（25%）
+        mgr.closePosition("user001", "IF2601", OrderSide::SELL, 1, 4100.0, 300);
+        
+        auto pos = mgr.getPosition("user001", "IF2601");
+        REQUIRE(pos->longPosition == 3);
+        // 保证金应减少25%：480000 * 0.75 = 360000
+        REQUIRE(pos->longMargin == Approx(360000.0));
+    }
+    
+    SECTION("空头部分平仓") {
+        // 开仓：4手 @ 4100，保证金 492000
+        mgr.openPosition("user001", "IF2601", OrderSide::SELL, 4, 4100.0, 492000.0);
+        
+        // 平仓：2手（50%）
+        mgr.closePosition("user001", "IF2601", OrderSide::BUY, 2, 4000.0, 300);
+        
+        auto pos = mgr.getPosition("user001", "IF2601");
+        REQUIRE(pos->shortPosition == 2);
+        // 保证金应减少50%：492000 * 0.5 = 246000
+        REQUIRE(pos->shortMargin == Approx(246000.0));
+    }
+    
+    SECTION("多次部分平仓") {
+        // 开仓：10手，保证金 1000000
+        mgr.openPosition("user001", "IF2601", OrderSide::BUY, 10, 4000.0, 1000000.0);
+        
+        // 第一次平仓：3手（30%）
+        mgr.closePosition("user001", "IF2601", OrderSide::SELL, 3, 4050.0, 300);
+        
+        auto pos1 = mgr.getPosition("user001", "IF2601");
+        REQUIRE(pos1->longPosition == 7);
+        // 保证金：1000000 * 0.7 = 700000
+        REQUIRE(pos1->longMargin == Approx(700000.0));
+        
+        // 第二次平仓：2手（剩余7手中的2手，约28.57%）
+        mgr.closePosition("user001", "IF2601", OrderSide::SELL, 2, 4060.0, 300);
+        
+        auto pos2 = mgr.getPosition("user001", "IF2601");
+        REQUIRE(pos2->longPosition == 5);
+        // 保证金：700000 * (5/7) = 500000
+        REQUIRE(pos2->longMargin == Approx(500000.0));
+    }
+}
+
 TEST_CASE("PositionManager closePosition 平空头", "[position_manager][unit]") {
     PositionManager mgr;
     
