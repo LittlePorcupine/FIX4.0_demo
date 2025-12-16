@@ -7,6 +7,7 @@
 #include "app/simulation_app.hpp"
 #include "app/matching_engine.hpp"
 #include "app/order.hpp"
+#include "market/market_data.hpp"
 
 using namespace fix40;
 
@@ -456,7 +457,7 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
     
     SessionID sid("CLIENT", "SERVER");
     
-    SECTION("New order creates OrderBook and sends ExecutionReport") {
+    SECTION("New order creates pending order and sends ExecutionReport") {
         Order order;
         order.clOrdID = "ORDER001";
         order.symbol = "AAPL";
@@ -482,33 +483,14 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
         REQUIRE(reports[0].second.ordStatus == OrderStatus::NEW);
         REQUIRE_FALSE(reports[0].second.orderID.empty());
         
-        // 验证 OrderBook 已创建
-        const OrderBook* book = engine.getOrderBook("AAPL");
-        REQUIRE(book != nullptr);
-        REQUIRE(book->getBidOrderCount() == 1);
+        // 验证挂单列表已创建（行情驱动模式下订单进入 pendingOrders_）
+        const auto* pendingOrders = engine.getPendingOrders("AAPL");
+        REQUIRE(pendingOrders != nullptr);
+        REQUIRE(pendingOrders->size() == 1);
     }
     
-    SECTION("Matching orders produces trades") {
-        // 先挂卖单
-        Order sellOrder;
-        sellOrder.clOrdID = "SELL001";
-        sellOrder.symbol = "TEST";
-        sellOrder.side = OrderSide::SELL;
-        sellOrder.orderQty = 10;
-        sellOrder.leavesQty = 10;
-        sellOrder.price = 100.0;
-        sellOrder.ordType = OrderType::LIMIT;
-        sellOrder.sessionID = sid;
-        
-        engine.submit(OrderEvent::newOrder(sellOrder));
-        
-        // 等待卖单确认
-        REQUIRE(waitFor([&]() {
-            std::lock_guard<std::mutex> lock(reportsMutex);
-            return reports.size() >= 1;
-        }));
-        
-        // 再挂买单，应该成交
+    SECTION("Market data triggers matching") {
+        // 行情驱动模式：先挂买单，然后提交行情触发成交
         Order buyOrder;
         buyOrder.clOrdID = "BUY001";
         buyOrder.symbol = "TEST";
@@ -521,30 +503,59 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
         
         engine.submit(OrderEvent::newOrder(buyOrder));
         
-        // 等待所有报告（卖单确认 + 买单成交 + 卖单成交通知）
+        // 等待买单确认（挂单）
         REQUIRE(waitFor([&]() {
             std::lock_guard<std::mutex> lock(reportsMutex);
-            return reports.size() >= 3;
+            return reports.size() >= 1;
+        }));
+        
+        {
+            std::lock_guard<std::mutex> lock(reportsMutex);
+            REQUIRE(reports.size() == 1);
+            REQUIRE(reports[0].second.clOrdID == "BUY001");
+            REQUIRE(reports[0].second.ordStatus == OrderStatus::NEW);
+        }
+        
+        // 验证订单在挂单列表中
+        const auto* pendingOrders = engine.getPendingOrders("TEST");
+        REQUIRE(pendingOrders != nullptr);
+        REQUIRE(pendingOrders->size() == 1);
+        
+        // 提交行情数据，卖一价 <= 买单价格，应该触发成交
+        MarketData md;
+        md.setInstrumentID("TEST");
+        md.bidPrice1 = 99.0;
+        md.bidVolume1 = 100;
+        md.askPrice1 = 100.0;  // 卖一价 == 买单价格，应该成交
+        md.askVolume1 = 100;
+        md.lastPrice = 100.0;
+        
+        engine.submitMarketData(md);
+        
+        // 等待成交报告
+        REQUIRE(waitFor([&]() {
+            std::lock_guard<std::mutex> lock(reportsMutex);
+            return reports.size() >= 2;
         }));
         
         std::lock_guard<std::mutex> lock(reportsMutex);
-        // 应该有：卖单确认 + 买单成交 + 卖单成交通知
         REQUIRE(reports.size() >= 2);
         
-        // 找到买单的报告
-        auto buyReport = std::find_if(reports.begin(), reports.end(),
-            [](const auto& p) { return p.second.clOrdID == "BUY001"; });
-        REQUIRE(buyReport != reports.end());
-        REQUIRE(buyReport->second.ordStatus == OrderStatus::FILLED);
-        REQUIRE(buyReport->second.cumQty == 10);
+        // 找到成交报告
+        auto fillReport = std::find_if(reports.begin(), reports.end(),
+            [](const auto& p) { 
+                return p.second.clOrdID == "BUY001" && 
+                       p.second.ordStatus == OrderStatus::FILLED; 
+            });
+        REQUIRE(fillReport != reports.end());
+        REQUIRE(fillReport->second.cumQty == 10);
+        REQUIRE(fillReport->second.lastPx == 100.0);  // 以卖一价成交
         
-        // 验证 OrderBook 为空（双方都成交）
-        const OrderBook* book = engine.getOrderBook("TEST");
-        REQUIRE(book != nullptr);
-        REQUIRE(book->empty());
+        // 验证挂单列表为空（已成交）
+        REQUIRE(engine.getTotalPendingOrderCount() == 0);
     }
     
-    SECTION("Cancel order") {
+    SECTION("Cancel order from pending orders") {
         // 先挂单
         Order order;
         order.clOrdID = "ORDER001";
@@ -563,6 +574,11 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
             std::lock_guard<std::mutex> lock(reportsMutex);
             return reports.size() >= 1;
         }));
+        
+        // 验证订单在挂单列表中
+        const auto* pendingOrders = engine.getPendingOrders("AAPL");
+        REQUIRE(pendingOrders != nullptr);
+        REQUIRE(pendingOrders->size() == 1);
         
         // 撤单
         CancelRequest cancel;
@@ -588,10 +604,8 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
         REQUIRE(cancelReport != reports.end());
         REQUIRE(cancelReport->second.ordStatus == OrderStatus::CANCELED);
         
-        // 验证 OrderBook 为空
-        const OrderBook* book = engine.getOrderBook("AAPL");
-        REQUIRE(book != nullptr);
-        REQUIRE(book->empty());
+        // 验证挂单列表为空（已撤单）
+        REQUIRE(engine.getTotalPendingOrderCount() == 0);
     }
     
     engine.stop();
