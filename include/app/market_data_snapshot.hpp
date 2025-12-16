@@ -118,6 +118,8 @@ struct MarketDataSnapshot {
      * 无效行情不能用于撮合判断。
      *
      * @return 如果行情有效返回 true
+     *
+     * @note 价格为 0 或负数视为无效行情（未初始化或数据异常）
      */
     bool isValid() const {
         return bidPrice1 > 0 || askPrice1 > 0;
@@ -145,6 +147,10 @@ struct MarketDataSnapshot {
      * @brief 获取买卖价差
      *
      * @return 卖一价 - 买一价，如果任一价格无效则返回 0
+     *
+     * @note 正常情况下价差应为正数（卖一价 > 买一价）。
+     *       如果返回负值，表示出现"crossed quotes"异常行情，
+     *       调用方应检查数据有效性。
      */
     double getSpread() const {
         if (bidPrice1 > 0 && askPrice1 > 0) {
@@ -176,6 +182,9 @@ struct MarketDataSnapshot {
      *
      * @param other 另一个行情快照
      * @return 如果所有字段相等则返回 true
+     *
+     * @note 此操作符使用精确比较，适用于序列化/反序列化的 round-trip 测试。
+     *       如需比较计算结果，请使用带容差的比较方法。
      */
     bool operator==(const MarketDataSnapshot& other) const {
         return instrumentId == other.instrumentId &&

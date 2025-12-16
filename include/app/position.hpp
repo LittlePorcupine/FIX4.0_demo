@@ -189,6 +189,9 @@ struct Position {
      *
      * @param other 另一个持仓
      * @return 如果所有字段相等则返回 true
+     *
+     * @note 此操作符使用精确比较，适用于序列化/反序列化的 round-trip 测试。
+     *       如需比较计算结果，请使用带容差的比较方法。
      */
     bool operator==(const Position& other) const {
         return accountId == other.accountId &&

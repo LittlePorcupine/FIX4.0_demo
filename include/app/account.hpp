@@ -89,7 +89,9 @@ struct Account {
      * @brief 带初始余额的构造函数
      *
      * @param id 账户ID
-     * @param initialBalance 初始余额
+     * @param initialBalance 初始余额（同时初始化余额和可用资金）
+     *
+     * @note 新账户的可用资金等于初始余额，因为没有冻结或占用的保证金
      */
     Account(const std::string& id, double initialBalance)
         : accountId(id)
@@ -155,6 +157,9 @@ struct Account {
      *
      * @param other 另一个账户
      * @return 如果所有字段相等则返回 true
+     *
+     * @note 此操作符使用精确比较，适用于序列化/反序列化的 round-trip 测试。
+     *       如需比较计算结果，请使用带容差的比较方法。
      */
     bool operator==(const Account& other) const {
         return accountId == other.accountId &&
