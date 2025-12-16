@@ -132,4 +132,83 @@ inline FixMessage create_logout_message(const std::string& sender,
     return lo;
 }
 
+/**
+ * @brief 创建 ResendRequest 消息
+ * @param sender 发送方 CompID
+ * @param target 接收方 CompID
+ * @param seq_num 消息序列号
+ * @param begin_seq_no 请求重传的起始序列号
+ * @param end_seq_no 请求重传的结束序列号（0 表示到最新）
+ * @return FixMessage ResendRequest 消息对象
+ *
+ * ResendRequest 消息用于请求对方重传指定范围的消息。
+ * 当检测到序列号 gap 时发送此消息。
+ *
+ * - MsgType (35) = "2"
+ * - BeginSeqNo (7) = 起始序列号
+ * - EndSeqNo (16) = 结束序列号（0 表示无限）
+ */
+inline FixMessage create_resend_request_message(const std::string& sender,
+                                                 const std::string& target,
+                                                 int seq_num,
+                                                 int begin_seq_no,
+                                                 int end_seq_no) {
+    FixMessage rr;
+    rr.set(tags::MsgType, "2");
+    rr.set(tags::SenderCompID, sender);
+    rr.set(tags::TargetCompID, target);
+    rr.set(tags::MsgSeqNum, seq_num);
+    rr.set(tags::BeginSeqNo, begin_seq_no);
+    rr.set(tags::EndSeqNo, end_seq_no);
+    return rr;
+}
+
+/**
+ * @brief 创建 SequenceReset 消息
+ * @param sender 发送方 CompID
+ * @param target 接收方 CompID
+ * @param seq_num 消息序列号
+ * @param new_seq_no 新的序列号
+ * @param gap_fill 是否为 GapFill 模式
+ * @return FixMessage SequenceReset 消息对象
+ *
+ * SequenceReset 消息用于：
+ * 1. GapFill 模式：跳过管理消息（如 Heartbeat、TestRequest）
+ * 2. Reset 模式：重置序列号（通常在会话重置时使用）
+ *
+ * - MsgType (35) = "4"
+ * - NewSeqNo (36) = 新序列号
+ * - GapFillFlag (123) = Y/N
+ */
+inline FixMessage create_sequence_reset_message(const std::string& sender,
+                                                 const std::string& target,
+                                                 int seq_num,
+                                                 int new_seq_no,
+                                                 bool gap_fill = true) {
+    FixMessage sr;
+    sr.set(tags::MsgType, "4");
+    sr.set(tags::SenderCompID, sender);
+    sr.set(tags::TargetCompID, target);
+    sr.set(tags::MsgSeqNum, seq_num);
+    sr.set(tags::NewSeqNo, new_seq_no);
+    sr.set(tags::GapFillFlag, gap_fill ? "Y" : "N");
+    return sr;
+}
+
+/**
+ * @brief 判断消息类型是否为管理消息
+ * @param msg_type 消息类型
+ * @return true 如果是管理消息（Heartbeat、TestRequest、Logon、Logout、ResendRequest、SequenceReset）
+ *
+ * 管理消息在重传时应使用 SequenceReset-GapFill 跳过，而不是重新发送。
+ */
+inline bool is_admin_message(const std::string& msg_type) {
+    return msg_type == "0" ||  // Heartbeat
+           msg_type == "1" ||  // TestRequest
+           msg_type == "2" ||  // ResendRequest
+           msg_type == "4" ||  // SequenceReset
+           msg_type == "5" ||  // Logout
+           msg_type == "A";    // Logon
+}
+
 } // namespace fix40

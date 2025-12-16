@@ -18,6 +18,7 @@
 #include "base/timing_wheel.hpp"
 #include "base/config.hpp"
 #include "base/logger.hpp"
+#include "storage/store.hpp"
 
 
 namespace fix40 {
@@ -80,6 +81,10 @@ private:
     void handleHeartbeat(Session& context, const FixMessage& msg);
     /** @brief 处理 TestRequest 消息 */
     void handleTestRequest(Session& context, const FixMessage& msg);
+    /** @brief 处理 ResendRequest 消息 */
+    void handleResendRequest(Session& context, const FixMessage& msg);
+    /** @brief 处理 SequenceReset 消息 */
+    void handleSequenceReset(Session& context, const FixMessage& msg);
     /** @brief 处理 Logout 消息 */
     void handleLogout(Session& context, const FixMessage& msg);
     /** @brief 处理 Logon 消息（异常情况） */
@@ -124,18 +129,25 @@ public:
 Session::Session(const std::string& sender,
                  const std::string& target,
                  int hb,
-                 ShutdownCallback shutdown_cb)
+                 ShutdownCallback shutdown_cb,
+                 IStore* store)
     : senderCompID(sender),
       targetCompID(target),
       heartBtInt(hb),
       minHeartBtInt_(Config::instance().get_int("fix_session", "min_heartbeat_interval", 5)),
       maxHeartBtInt_(Config::instance().get_int("fix_session", "max_heartbeat_interval", 120)),
-      shutdown_callback_(std::move(shutdown_cb)) {
+      shutdown_callback_(std::move(shutdown_cb)),
+      store_(store) {
 
     // 初始状态为断开
     currentState_ = std::make_unique<DisconnectedState>();
     update_last_recv_time();
     update_last_send_time();
+    
+    // 如果有存储接口，尝试恢复会话状态
+    if (store_) {
+        restore_session_state();
+    }
 }
 
 Session::~Session() {
@@ -221,11 +233,45 @@ void Session::on_message_received(const FixMessage& msg) {
     update_last_recv_time();
 
     const int msg_seq_num = msg.get_int(tags::MsgSeqNum);
-    if (msg_seq_num != recvSeqNum) {
-        perform_shutdown("Incorrect sequence number received. Expected: " + std::to_string(recvSeqNum) + " Got: " + std::to_string(msg_seq_num));
+    const std::string msg_type = msg.get_string(tags::MsgType);
+    
+    // 检查是否是 SequenceReset 消息（特殊处理）
+    if (msg_type == "4") {
+        // SequenceReset 消息需要特殊处理，不检查序列号
+        currentState_->onMessageReceived(*this, msg);
         return;
     }
     
+    // 检查序列号
+    if (msg_seq_num > recvSeqNum) {
+        // 检测到序列号 gap，发送 ResendRequest
+        LOG() << "Sequence number gap detected. Expected: " << recvSeqNum 
+              << ", Got: " << msg_seq_num << ". Sending ResendRequest.";
+        
+        // 发送 ResendRequest 请求重传缺失的消息
+        send_resend_request(recvSeqNum, msg_seq_num - 1);
+        
+        // 暂存当前消息，等待重传完成后处理
+        // 注意：简化实现中，我们先处理当前消息，实际生产环境应该排队
+        // 这里我们选择断开连接，让对方重新发送
+        perform_shutdown("Sequence number gap detected. Expected: " + std::to_string(recvSeqNum) + 
+                        " Got: " + std::to_string(msg_seq_num) + ". ResendRequest sent.");
+        return;
+    } else if (msg_seq_num < recvSeqNum) {
+        // 收到的序列号小于期望值
+        // 检查是否是重复消息（PossDupFlag = Y）
+        if (msg.has(tags::PossDupFlag) && msg.get_string(tags::PossDupFlag) == "Y") {
+            LOG() << "Ignoring duplicate message with SeqNum=" << msg_seq_num;
+            return;
+        }
+        
+        // 非重复消息但序列号过低，这是严重错误
+        perform_shutdown("Received message with sequence number lower than expected. Expected: " + 
+                        std::to_string(recvSeqNum) + " Got: " + std::to_string(msg_seq_num));
+        return;
+    }
+    
+    // 序列号正确，正常处理
     currentState_->onMessageReceived(*this, msg);
 }
 
@@ -251,9 +297,30 @@ void Session::initiate_logout(const std::string& reason) {
 
 void Session::send(FixMessage& msg) {
     std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-    msg.set(tags::MsgSeqNum, sendSeqNum++);
+    int seq_num = sendSeqNum++;
+    msg.set(tags::MsgSeqNum, seq_num);
     
     std::string raw_msg = codec_.encode(msg);
+    
+    // 持久化消息（用于断线恢复时重传）
+    if (store_) {
+        StoredMessage stored_msg;
+        stored_msg.seqNum = seq_num;
+        stored_msg.senderCompID = senderCompID;
+        stored_msg.targetCompID = targetCompID;
+        stored_msg.msgType = msg.get_string(tags::MsgType);
+        stored_msg.rawMessage = raw_msg;
+        stored_msg.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        
+        if (!store_->saveMessage(stored_msg)) {
+            LOG() << "Warning: Failed to persist message with SeqNum=" << seq_num;
+        }
+        
+        // 保存会话状态
+        save_session_state();
+    }
+    
     internal_send(raw_msg);
 }
 
@@ -442,6 +509,8 @@ void LogonSentState::onLogoutRequest(Session& context, const std::string& reason
 EstablishedState::EstablishedState() : messageHandlers_({
     {"0", &EstablishedState::handleHeartbeat},
     {"1", &EstablishedState::handleTestRequest},
+    {"2", &EstablishedState::handleResendRequest},
+    {"4", &EstablishedState::handleSequenceReset},
     {"5", &EstablishedState::handleLogout},
     {"A", &EstablishedState::handleLogon}
 }) {}
@@ -553,6 +622,120 @@ void EstablishedState::handleLogon(Session& context, [[maybe_unused]] const FixM
     context.perform_shutdown("Logon not expected after session is established.");
 }
 
+void EstablishedState::handleResendRequest(Session& context, const FixMessage& msg) {
+    int begin_seq_no = msg.get_int(tags::BeginSeqNo);
+    int end_seq_no = msg.get_int(tags::EndSeqNo);
+    
+    LOG() << "Received ResendRequest: BeginSeqNo=" << begin_seq_no << ", EndSeqNo=" << end_seq_no;
+    
+    IStore* store = context.get_store();
+    if (!store) {
+        // 没有存储，无法重传，发送 SequenceReset-GapFill 跳过所有请求的消息
+        LOG() << "No store available for message resend. Sending SequenceReset-GapFill.";
+        context.send_sequence_reset_gap_fill(begin_seq_no, context.get_send_seq_num());
+        return;
+    }
+    
+    // 如果 end_seq_no 为 0，表示请求到最新
+    if (end_seq_no == 0) {
+        end_seq_no = context.get_send_seq_num() - 1;
+    }
+    
+    // 从存储加载消息
+    auto messages = store->loadMessages(context.senderCompID, context.targetCompID, 
+                                        begin_seq_no, end_seq_no);
+    
+    if (messages.empty()) {
+        // 没有找到消息，发送 SequenceReset-GapFill
+        LOG() << "No messages found for resend. Sending SequenceReset-GapFill.";
+        context.send_sequence_reset_gap_fill(begin_seq_no, end_seq_no + 1);
+        return;
+    }
+    
+    // 重传消息
+    context.set_processing_resend(true);
+    
+    int gap_fill_start = -1;
+    int last_seq = begin_seq_no - 1;
+    
+    for (const auto& stored_msg : messages) {
+        // 检查是否有序列号 gap（消息丢失）
+        if (stored_msg.seqNum > last_seq + 1) {
+            // 发送 GapFill 跳过缺失的消息
+            if (gap_fill_start == -1) {
+                gap_fill_start = last_seq + 1;
+            }
+        }
+        
+        // 检查是否是管理消息
+        if (is_admin_message(stored_msg.msgType)) {
+            // 管理消息用 GapFill 跳过
+            if (gap_fill_start == -1) {
+                gap_fill_start = stored_msg.seqNum;
+            }
+        } else {
+            // 业务消息需要重传
+            // 先发送之前累积的 GapFill
+            if (gap_fill_start != -1) {
+                context.send_sequence_reset_gap_fill(gap_fill_start, stored_msg.seqNum);
+                gap_fill_start = -1;
+            }
+            
+            // 重传业务消息（添加 PossDupFlag）
+            LOG() << "Resending message SeqNum=" << stored_msg.seqNum;
+            
+            // 解码原始消息，添加 PossDupFlag，重新编码发送
+            FixMessage resend_msg = context.codec_.decode(stored_msg.rawMessage);
+            resend_msg.set(tags::PossDupFlag, "Y");
+            resend_msg.set(tags::OrigSendingTime, resend_msg.get_string(tags::SendingTime));
+            
+            std::string raw_msg = context.codec_.encode(resend_msg);
+            // 直接发送，不更新序列号
+            if (auto conn = context.get_connection().lock()) {
+                conn->send(raw_msg);
+            }
+        }
+        
+        last_seq = stored_msg.seqNum;
+    }
+    
+    // 发送最后的 GapFill（如果有）
+    if (gap_fill_start != -1) {
+        context.send_sequence_reset_gap_fill(gap_fill_start, end_seq_no + 1);
+    }
+    
+    // 检查是否还有未覆盖的序列号
+    if (last_seq < end_seq_no) {
+        context.send_sequence_reset_gap_fill(last_seq + 1, end_seq_no + 1);
+    }
+    
+    context.set_processing_resend(false);
+}
+
+void EstablishedState::handleSequenceReset(Session& context, const FixMessage& msg) {
+    int new_seq_no = msg.get_int(tags::NewSeqNo);
+    bool is_gap_fill = msg.has(tags::GapFillFlag) && msg.get_string(tags::GapFillFlag) == "Y";
+    
+    LOG() << "Received SequenceReset: NewSeqNo=" << new_seq_no 
+          << ", GapFill=" << (is_gap_fill ? "Y" : "N");
+    
+    if (is_gap_fill) {
+        // GapFill 模式：只能向前移动序列号
+        int current_recv_seq = context.get_recv_seq_num();
+        if (new_seq_no > current_recv_seq) {
+            context.set_recv_seq_num(new_seq_no);
+            LOG() << "Updated expected receive sequence number to " << new_seq_no;
+        } else if (new_seq_no < current_recv_seq) {
+            LOG() << "Warning: SequenceReset-GapFill with NewSeqNo=" << new_seq_no 
+                  << " is less than expected " << current_recv_seq << ". Ignoring.";
+        }
+    } else {
+        // Reset 模式：可以重置到任意值
+        context.set_recv_seq_num(new_seq_no);
+        LOG() << "Reset expected receive sequence number to " << new_seq_no;
+    }
+}
+
 // --- 已发送 Logout 状态 ---
 LogoutSentState::LogoutSentState(std::string reason) 
     : reason_(std::move(reason)), initiation_time_(std::chrono::steady_clock::now()) {}
@@ -577,6 +760,63 @@ void LogoutSentState::onTimerCheck(Session& context) {
 
 void LogoutSentState::onLogoutRequest([[maybe_unused]] Session& context, [[maybe_unused]] const std::string& reason) {
     // 已在登出过程中，不执行任何操作。
+}
+
+// =================================================================================
+// 断线恢复相关方法实现
+// =================================================================================
+
+void Session::send_resend_request(int begin_seq_no, int end_seq_no) {
+    auto rr_msg = create_resend_request_message(senderCompID, targetCompID, 0, begin_seq_no, end_seq_no);
+    send(rr_msg);
+    LOG() << "Sent ResendRequest: BeginSeqNo=" << begin_seq_no << ", EndSeqNo=" << end_seq_no;
+}
+
+void Session::send_sequence_reset_gap_fill(int seq_num, int new_seq_no) {
+    auto sr_msg = create_sequence_reset_message(senderCompID, targetCompID, seq_num, new_seq_no, true);
+    
+    // GapFill 消息需要设置 PossDupFlag
+    sr_msg.set(tags::PossDupFlag, "Y");
+    
+    // 直接编码发送，不递增序列号（因为这是重传流程的一部分）
+    std::string raw_msg = codec_.encode(sr_msg);
+    internal_send(raw_msg);
+    
+    LOG() << "Sent SequenceReset-GapFill: SeqNum=" << seq_num << ", NewSeqNo=" << new_seq_no;
+}
+
+void Session::save_session_state() {
+    if (!store_) return;
+    
+    SessionState state;
+    state.senderCompID = senderCompID;
+    state.targetCompID = targetCompID;
+    state.sendSeqNum = sendSeqNum;
+    state.recvSeqNum = recvSeqNum;
+    state.lastUpdateTime = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    
+    if (!store_->saveSessionState(state)) {
+        LOG() << "Warning: Failed to save session state";
+    }
+}
+
+bool Session::restore_session_state() {
+    if (!store_) return false;
+    
+    auto state = store_->loadSessionState(senderCompID, targetCompID);
+    if (!state) {
+        LOG() << "No saved session state found for " << senderCompID << " -> " << targetCompID;
+        return false;
+    }
+    
+    sendSeqNum = state->sendSeqNum;
+    recvSeqNum = state->recvSeqNum;
+    
+    LOG() << "Restored session state: SendSeqNum=" << sendSeqNum 
+          << ", RecvSeqNum=" << recvSeqNum;
+    
+    return true;
 }
 
 } // fix40 名称空间结束

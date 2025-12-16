@@ -27,6 +27,7 @@ namespace fix40 {
 
 class Connection;
 class Session;
+class IStore;  // 前向声明
 
 /**
  * @class IStateHandler
@@ -126,11 +127,13 @@ public:
      * @param target 接收方 CompID
      * @param hb 心跳间隔（秒）
      * @param shutdown_cb 会话关闭时的回调函数
+     * @param store 存储接口指针（可选，用于消息持久化和断线恢复）
      */
     Session(const std::string& sender,
             const std::string& target,
             int hb,
-            ShutdownCallback shutdown_cb);
+            ShutdownCallback shutdown_cb,
+            IStore* store = nullptr);
 
     /**
      * @brief 析构函数
@@ -341,6 +344,58 @@ public:
     /** @brief 设置接收序列号 */
     void set_recv_seq_num(int seq) { recvSeqNum = seq; }
 
+    /** @brief 设置发送序列号 */
+    void set_send_seq_num(int seq) { sendSeqNum = seq; }
+
+    // --- 断线恢复相关 ---
+
+    /**
+     * @brief 发送 ResendRequest 消息
+     * @param begin_seq_no 请求重传的起始序列号
+     * @param end_seq_no 请求重传的结束序列号（0 表示到最新）
+     */
+    void send_resend_request(int begin_seq_no, int end_seq_no);
+
+    /**
+     * @brief 发送 SequenceReset-GapFill 消息
+     * @param seq_num 消息序列号
+     * @param new_seq_no 新的序列号
+     */
+    void send_sequence_reset_gap_fill(int seq_num, int new_seq_no);
+
+    /**
+     * @brief 保存会话状态到存储
+     */
+    void save_session_state();
+
+    /**
+     * @brief 从存储恢复会话状态
+     * @return true 如果成功恢复，false 如果没有保存的状态
+     */
+    bool restore_session_state();
+
+    /**
+     * @brief 获取存储接口
+     * @return IStore* 存储接口指针，可能为 nullptr
+     */
+    IStore* get_store() const { return store_; }
+
+    /**
+     * @brief 获取连接对象
+     * @return std::weak_ptr<Connection> 连接的弱引用
+     */
+    std::weak_ptr<Connection> get_connection() const { return connection_; }
+
+    /**
+     * @brief 检查是否正在处理重传请求
+     */
+    bool is_processing_resend() const { return processingResend_; }
+
+    /**
+     * @brief 设置重传处理状态
+     */
+    void set_processing_resend(bool processing) { processingResend_ = processing; }
+
 private:
     std::atomic<bool> shutting_down_{false};   ///< 关闭中标志
     std::recursive_mutex state_mutex_;          ///< 状态保护锁
@@ -371,6 +426,8 @@ private:
     TimerTaskId timer_task_id_ = INVALID_TIMER_ID; ///< 定时任务 ID
 
     Application* application_ = nullptr;  ///< 应用层处理器指针
+    IStore* store_ = nullptr;             ///< 存储接口指针（用于消息持久化）
+    bool processingResend_ = false;       ///< 是否正在处理重传请求
 };
 
 } // namespace fix40

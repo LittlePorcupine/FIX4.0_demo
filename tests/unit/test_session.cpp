@@ -1,8 +1,11 @@
 #include "../catch2/catch.hpp"
+#include <rapidcheck.h>
+#include <rapidcheck/catch.h>
 #include "fix/session.hpp"
 #include "fix/fix_messages.hpp"
 #include "fix/fix_codec.hpp"
 #include "base/config.hpp"
+#include "storage/sqlite_store.hpp"
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -734,4 +737,338 @@ TEST_CASE("DisconnectedState logout request does nothing", "[session][state]") {
     session->initiate_logout("Test");
     
     REQUIRE(session->is_running());
+}
+
+
+// =============================================================================
+// RapidCheck 生成器
+// =============================================================================
+
+namespace rc {
+
+/**
+ * @brief StoredMessage 生成器（用于消息持久化测试）
+ */
+template<>
+struct Arbitrary<StoredMessage> {
+    static Gen<StoredMessage> arbitrary() {
+        return gen::build<StoredMessage>(
+            gen::set(&StoredMessage::seqNum, gen::inRange(1, 100000)),
+            gen::set(&StoredMessage::senderCompID, gen::nonEmpty<std::string>()),
+            gen::set(&StoredMessage::targetCompID, gen::nonEmpty<std::string>()),
+            gen::set(&StoredMessage::msgType, gen::element<std::string>("D", "8", "F", "G")),
+            gen::set(&StoredMessage::rawMessage, gen::nonEmpty<std::string>()),
+            gen::set(&StoredMessage::timestamp, gen::inRange<int64_t>(1000000000000, 2000000000000))
+        );
+    }
+};
+
+/**
+ * @brief SessionState 生成器（用于序列号恢复测试）
+ */
+template<>
+struct Arbitrary<SessionState> {
+    static Gen<SessionState> arbitrary() {
+        return gen::build<SessionState>(
+            gen::set(&SessionState::senderCompID, gen::nonEmpty<std::string>()),
+            gen::set(&SessionState::targetCompID, gen::nonEmpty<std::string>()),
+            gen::set(&SessionState::sendSeqNum, gen::inRange(1, 100000)),
+            gen::set(&SessionState::recvSeqNum, gen::inRange(1, 100000)),
+            gen::set(&SessionState::lastUpdateTime, gen::inRange<int64_t>(1000000000000, 2000000000000))
+        );
+    }
+};
+
+} // namespace rc
+
+// =============================================================================
+// 断线恢复属性测试
+// =============================================================================
+
+/**
+ * **Feature: paper-trading-system, Property 15: FIX消息持久化round-trip**
+ * **Validates: Requirements 11.1, 11.4**
+ * 
+ * 对于任意FIX消息，保存到数据库后按序列号范围加载，应得到原始消息。
+ */
+TEST_CASE("Session - FIX消息持久化 round-trip 属性测试", "[session][property][recovery]") {
+    
+    rc::prop("消息保存后按序列号范围加载应得到原始消息",
+        []() {
+            SqliteStore store(":memory:");
+            RC_ASSERT(store.isOpen());
+            
+            auto msg = *rc::gen::arbitrary<StoredMessage>();
+            
+            // 保存消息
+            RC_ASSERT(store.saveMessage(msg));
+            
+            // 按序列号范围加载
+            auto messages = store.loadMessages(msg.senderCompID, msg.targetCompID, 
+                                               msg.seqNum, msg.seqNum);
+            RC_ASSERT(messages.size() == 1);
+            
+            // 验证字段相等
+            RC_ASSERT(messages[0].seqNum == msg.seqNum);
+            RC_ASSERT(messages[0].senderCompID == msg.senderCompID);
+            RC_ASSERT(messages[0].targetCompID == msg.targetCompID);
+            RC_ASSERT(messages[0].msgType == msg.msgType);
+            RC_ASSERT(messages[0].rawMessage == msg.rawMessage);
+            RC_ASSERT(messages[0].timestamp == msg.timestamp);
+        });
+    
+    rc::prop("多条消息按序列号顺序加载",
+        []() {
+            SqliteStore store(":memory:");
+            RC_ASSERT(store.isOpen());
+            
+            // 生成固定的 sender/target
+            std::string sender = "SENDER";
+            std::string target = "TARGET";
+            
+            // 生成 3-10 条消息
+            int count = *rc::gen::inRange(3, 10);
+            
+            for (int i = 1; i <= count; ++i) {
+                StoredMessage msg;
+                msg.seqNum = i;
+                msg.senderCompID = sender;
+                msg.targetCompID = target;
+                msg.msgType = "D";
+                msg.rawMessage = "msg_" + std::to_string(i);
+                msg.timestamp = 1000000000000 + i;
+                RC_ASSERT(store.saveMessage(msg));
+            }
+            
+            // 加载所有消息
+            auto messages = store.loadMessages(sender, target, 1, count);
+            RC_ASSERT(static_cast<int>(messages.size()) == count);
+            
+            // 验证顺序
+            for (int i = 0; i < count; ++i) {
+                RC_ASSERT(messages[i].seqNum == i + 1);
+            }
+        });
+    
+    rc::prop("加载指定范围的消息",
+        []() {
+            SqliteStore store(":memory:");
+            RC_ASSERT(store.isOpen());
+            
+            std::string sender = "SENDER";
+            std::string target = "TARGET";
+            
+            // 保存 10 条消息
+            for (int i = 1; i <= 10; ++i) {
+                StoredMessage msg;
+                msg.seqNum = i;
+                msg.senderCompID = sender;
+                msg.targetCompID = target;
+                msg.msgType = "D";
+                msg.rawMessage = "msg_" + std::to_string(i);
+                msg.timestamp = 1000000000000 + i;
+                RC_ASSERT(store.saveMessage(msg));
+            }
+            
+            // 生成随机范围
+            int begin = *rc::gen::inRange(1, 5);
+            int end = *rc::gen::inRange(begin, 10);
+            
+            auto messages = store.loadMessages(sender, target, begin, end);
+            RC_ASSERT(static_cast<int>(messages.size()) == end - begin + 1);
+            RC_ASSERT(messages.front().seqNum == begin);
+            RC_ASSERT(messages.back().seqNum == end);
+        });
+}
+
+/**
+ * **Feature: paper-trading-system, Property 16: 序列号恢复正确性**
+ * **Validates: Requirements 11.2**
+ * 
+ * 对于任意会话的发送/接收序列号，保存后重新建立会话时应恢复到保存的值。
+ */
+TEST_CASE("Session - 序列号恢复正确性属性测试", "[session][property][recovery]") {
+    
+    rc::prop("会话状态保存后加载应得到相同的序列号",
+        []() {
+            SqliteStore store(":memory:");
+            RC_ASSERT(store.isOpen());
+            
+            auto state = *rc::gen::arbitrary<SessionState>();
+            
+            // 保存会话状态
+            RC_ASSERT(store.saveSessionState(state));
+            
+            // 加载会话状态
+            auto loaded = store.loadSessionState(state.senderCompID, state.targetCompID);
+            RC_ASSERT(loaded.has_value());
+            
+            // 验证序列号相等
+            RC_ASSERT(loaded->sendSeqNum == state.sendSeqNum);
+            RC_ASSERT(loaded->recvSeqNum == state.recvSeqNum);
+            RC_ASSERT(loaded->senderCompID == state.senderCompID);
+            RC_ASSERT(loaded->targetCompID == state.targetCompID);
+        });
+    
+    rc::prop("Session 构造时从 Store 恢复序列号",
+        []() {
+            SqliteStore store(":memory:");
+            RC_ASSERT(store.isOpen());
+            
+            // 生成随机序列号
+            int sendSeq = *rc::gen::inRange(1, 10000);
+            int recvSeq = *rc::gen::inRange(1, 10000);
+            
+            // 保存会话状态
+            SessionState state;
+            state.senderCompID = "CLIENT";
+            state.targetCompID = "SERVER";
+            state.sendSeqNum = sendSeq;
+            state.recvSeqNum = recvSeq;
+            state.lastUpdateTime = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            RC_ASSERT(store.saveSessionState(state));
+            
+            // 创建 Session，应该从 Store 恢复序列号
+            auto session = std::make_shared<Session>("CLIENT", "SERVER", 30, nullptr, &store);
+            
+            // 验证序列号已恢复
+            RC_ASSERT(session->get_send_seq_num() == sendSeq);
+            RC_ASSERT(session->get_recv_seq_num() == recvSeq);
+        });
+    
+    rc::prop("Session 发送消息时保存到 Store",
+        []() {
+            SqliteStore store(":memory:");
+            RC_ASSERT(store.isOpen());
+            
+            auto session = std::make_shared<Session>("CLIENT", "SERVER", 30, nullptr, &store);
+            session->start();
+            
+            // 模拟收到 Logon 确认，进入 Established 状态
+            auto logon_ack = create_logon_message("SERVER", "CLIENT", 1, 30);
+            session->on_message_received(logon_ack);
+            
+            // 发送一条业务消息
+            FixMessage msg;
+            msg.set(tags::MsgType, "D");
+            msg.set(tags::SenderCompID, "CLIENT");
+            msg.set(tags::TargetCompID, "SERVER");
+            session->send(msg);
+            
+            // 验证消息已保存到 Store
+            auto messages = store.loadMessages("CLIENT", "SERVER", 1, 100);
+            RC_ASSERT(messages.size() >= 1);
+            
+            // 验证会话状态已保存
+            auto state = store.loadSessionState("CLIENT", "SERVER");
+            RC_ASSERT(state.has_value());
+            RC_ASSERT(state->sendSeqNum >= 2);  // 至少发送了 Logon 和业务消息
+        });
+}
+
+// =============================================================================
+// 断线恢复单元测试
+// =============================================================================
+
+TEST_CASE("Session with Store - 消息持久化", "[session][recovery]") {
+    SqliteStore store(":memory:");
+    REQUIRE(store.isOpen());
+    
+    auto session = std::make_shared<Session>("CLIENT", "SERVER", 30, nullptr, &store);
+    session->start();
+    
+    // 模拟收到 Logon 确认
+    auto logon_ack = create_logon_message("SERVER", "CLIENT", 1, 30);
+    session->on_message_received(logon_ack);
+    
+    // 发送几条消息
+    for (int i = 0; i < 3; ++i) {
+        FixMessage msg;
+        msg.set(tags::MsgType, "D");
+        msg.set(tags::SenderCompID, "CLIENT");
+        msg.set(tags::TargetCompID, "SERVER");
+        session->send(msg);
+    }
+    
+    // 验证消息已保存
+    auto messages = store.loadMessages("CLIENT", "SERVER", 1, 100);
+    REQUIRE(messages.size() >= 3);
+}
+
+TEST_CASE("Session with Store - 序列号恢复", "[session][recovery]") {
+    SqliteStore store(":memory:");
+    REQUIRE(store.isOpen());
+    
+    // 预先保存会话状态
+    SessionState state;
+    state.senderCompID = "CLIENT";
+    state.targetCompID = "SERVER";
+    state.sendSeqNum = 100;
+    state.recvSeqNum = 50;
+    state.lastUpdateTime = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    REQUIRE(store.saveSessionState(state));
+    
+    // 创建 Session，应该恢复序列号
+    auto session = std::make_shared<Session>("CLIENT", "SERVER", 30, nullptr, &store);
+    
+    REQUIRE(session->get_send_seq_num() == 100);
+    REQUIRE(session->get_recv_seq_num() == 50);
+}
+
+TEST_CASE("Session - ResendRequest 和 SequenceReset 消息创建", "[session][recovery]") {
+    FixCodec codec;
+    
+    SECTION("ResendRequest 消息") {
+        auto rr = create_resend_request_message("CLIENT", "SERVER", 5, 10, 20);
+        
+        REQUIRE(rr.get_string(tags::MsgType) == "2");
+        REQUIRE(rr.get_int(tags::BeginSeqNo) == 10);
+        REQUIRE(rr.get_int(tags::EndSeqNo) == 20);
+        
+        // 编解码 round-trip
+        std::string encoded = codec.encode(rr);
+        auto decoded = codec.decode(encoded);
+        REQUIRE(decoded.get_string(tags::MsgType) == "2");
+        REQUIRE(decoded.get_int(tags::BeginSeqNo) == 10);
+        REQUIRE(decoded.get_int(tags::EndSeqNo) == 20);
+    }
+    
+    SECTION("SequenceReset-GapFill 消息") {
+        auto sr = create_sequence_reset_message("CLIENT", "SERVER", 5, 15, true);
+        
+        REQUIRE(sr.get_string(tags::MsgType) == "4");
+        REQUIRE(sr.get_int(tags::NewSeqNo) == 15);
+        REQUIRE(sr.get_string(tags::GapFillFlag) == "Y");
+        
+        // 编解码 round-trip
+        std::string encoded = codec.encode(sr);
+        auto decoded = codec.decode(encoded);
+        REQUIRE(decoded.get_string(tags::MsgType) == "4");
+        REQUIRE(decoded.get_int(tags::NewSeqNo) == 15);
+        REQUIRE(decoded.get_string(tags::GapFillFlag) == "Y");
+    }
+    
+    SECTION("SequenceReset-Reset 消息") {
+        auto sr = create_sequence_reset_message("CLIENT", "SERVER", 5, 1, false);
+        
+        REQUIRE(sr.get_string(tags::MsgType) == "4");
+        REQUIRE(sr.get_int(tags::NewSeqNo) == 1);
+        REQUIRE(sr.get_string(tags::GapFillFlag) == "N");
+    }
+}
+
+TEST_CASE("is_admin_message 函数", "[session][recovery]") {
+    REQUIRE(is_admin_message("0"));  // Heartbeat
+    REQUIRE(is_admin_message("1"));  // TestRequest
+    REQUIRE(is_admin_message("2"));  // ResendRequest
+    REQUIRE(is_admin_message("4"));  // SequenceReset
+    REQUIRE(is_admin_message("5"));  // Logout
+    REQUIRE(is_admin_message("A"));  // Logon
+    
+    REQUIRE_FALSE(is_admin_message("D"));  // NewOrderSingle
+    REQUIRE_FALSE(is_admin_message("8"));  // ExecutionReport
+    REQUIRE_FALSE(is_admin_message("F"));  // OrderCancelRequest
+    REQUIRE_FALSE(is_admin_message("G"));  // OrderCancelReplaceRequest
 }

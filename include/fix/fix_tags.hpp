@@ -145,5 +145,30 @@ constexpr int LastPx = 31;
 /// @brief 订单拒绝原因 (Order Reject Reason)
 constexpr int OrdRejReason = 103;
 
+// ============================================================================
+// 会话层标签 - 断线恢复相关
+// ============================================================================
+
+/// @brief 起始序列号 (Begin Sequence Number)，用于 ResendRequest
+constexpr int BeginSeqNo = 7;
+
+/// @brief 结束序列号 (End Sequence Number)，用于 ResendRequest
+constexpr int EndSeqNo = 16;
+
+/// @brief 新序列号 (New Sequence Number)，用于 SequenceReset
+constexpr int NewSeqNo = 36;
+
+/// @brief GapFill 标志 (Gap Fill Flag)，用于 SequenceReset
+/// Y = Gap Fill 模式，N = Reset 模式
+constexpr int GapFillFlag = 123;
+
+/// @brief 可能重复标志 (Possible Duplicate Flag)
+/// Y = 消息可能是重复的
+constexpr int PossDupFlag = 43;
+
+/// @brief 原始发送时间 (Original Sending Time)
+/// 重传消息时使用，记录原始发送时间
+constexpr int OrigSendingTime = 122;
+
 } // namespace tags
 } // namespace fix40
