@@ -55,6 +55,7 @@ add_library(fix_engine_test STATIC
     ../src/app/instrument_manager.cpp
     ../src/app/account_manager.cpp
     ../src/app/position_manager.cpp
+    ../src/app/risk_manager.cpp
     ../src/market/mock_md_adapter.cpp
     ../src/storage/sqlite_store.cpp
 )
@@ -88,6 +89,7 @@ add_executable(unit_tests
     unit/test_instrument_manager.cpp
     unit/test_account_manager.cpp
     unit/test_position_manager.cpp
+    unit/test_risk_manager.cpp
 )
 
 target_link_libraries(unit_tests PRIVATE fix_engine_test)
