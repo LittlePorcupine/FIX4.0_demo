@@ -74,6 +74,42 @@ class IStore;
 class SimulationApp : public Application {
 public:
     /**
+     * @struct OrderMarginInfo
+     * @brief 订单保证金信息
+     * 
+     * 用于正确处理部分成交时的保证金计算。
+     * 存储原始总冻结保证金和订单总数量，避免累计误差。
+     */
+    struct OrderMarginInfo {
+        double originalFrozenMargin;  ///< 原始总冻结保证金
+        int64_t originalOrderQty;     ///< 原始订单总数量
+        double releasedMargin;        ///< 已释放的保证金（累计）
+        
+        OrderMarginInfo() 
+            : originalFrozenMargin(0.0)
+            , originalOrderQty(0)
+            , releasedMargin(0.0) {}
+        
+        OrderMarginInfo(double frozen, int64_t qty)
+            : originalFrozenMargin(frozen)
+            , originalOrderQty(qty)
+            , releasedMargin(0.0) {}
+        
+        /// 计算本次成交应释放的冻结保证金
+        double calculateReleaseAmount(int64_t fillQty) {
+            if (originalOrderQty <= 0) return 0.0;
+            double amount = originalFrozenMargin * fillQty / originalOrderQty;
+            releasedMargin += amount;
+            return amount;
+        }
+        
+        /// 获取剩余未释放的冻结保证金
+        double getRemainingFrozen() const {
+            return originalFrozenMargin - releasedMargin;
+        }
+    };
+
+    /**
      * @brief 默认构造函数（不带持久化）
      */
     SimulationApp();
@@ -276,8 +312,8 @@ private:
     /// 订单到账户的映射：clOrdID -> accountId
     std::unordered_map<std::string, std::string> orderAccountMap_;
     
-    /// 订单冻结保证金映射：clOrdID -> frozenMargin
-    std::unordered_map<std::string, double> orderFrozenMarginMap_;
+    /// 订单保证金信息映射：clOrdID -> OrderMarginInfo
+    std::unordered_map<std::string, OrderMarginInfo> orderMarginInfoMap_;
     
     /// 互斥锁，保护映射表
     mutable std::mutex mapMutex_;

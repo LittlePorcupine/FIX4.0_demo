@@ -342,10 +342,10 @@ void SimulationApp::fromApp(const FixMessage& msg, const SessionID& sessionID) {
                 return;
             }
             
-            // 记录订单的冻结保证金
+            // 记录订单的冻结保证金信息（包含原始总量，用于正确处理部分成交）
             {
                 std::lock_guard<std::mutex> lock(mapMutex_);
-                orderFrozenMarginMap_[order.clOrdID] = requiredMargin;
+                orderMarginInfoMap_[order.clOrdID] = OrderMarginInfo(requiredMargin, order.orderQty);
             }
         }
         
@@ -414,7 +414,7 @@ void SimulationApp::onExecutionReport(const SessionID& sessionID, const Executio
         report.ordStatus == OrderStatus::CANCELED) {
         std::lock_guard<std::mutex> lock(mapMutex_);
         orderAccountMap_.erase(report.clOrdID);
-        orderFrozenMarginMap_.erase(report.clOrdID);
+        orderMarginInfoMap_.erase(report.clOrdID);
     }
     
     // 将 ExecutionReport 转换为 FIX 消息
@@ -486,15 +486,14 @@ void SimulationApp::handleFill(const std::string& accountId, const ExecutionRepo
         // 开仓处理
         double margin = instrument->calculateMargin(report.lastPx, report.lastShares);
         
-        // 获取冻结的保证金
+        // 获取冻结的保证金（使用原始总量计算，避免部分成交累计误差）
         double frozenMargin = 0.0;
         {
             std::lock_guard<std::mutex> lock(mapMutex_);
-            auto it = orderFrozenMarginMap_.find(report.clOrdID);
-            if (it != orderFrozenMarginMap_.end()) {
-                // 按成交比例计算应转换的冻结保证金
-                frozenMargin = it->second * report.lastShares / report.orderQty;
-                it->second -= frozenMargin;  // 减少剩余冻结
+            auto it = orderMarginInfoMap_.find(report.clOrdID);
+            if (it != orderMarginInfoMap_.end()) {
+                // 使用原始总冻结保证金按比例计算，避免累计误差
+                frozenMargin = it->second.calculateReleaseAmount(report.lastShares);
             }
         }
         
@@ -510,18 +509,20 @@ void SimulationApp::handleFill(const std::string& accountId, const ExecutionRepo
               << " side=" << static_cast<int>(report.side)
               << " qty=" << report.lastShares
               << " price=" << report.lastPx
-              << " margin=" << margin;
+              << " margin=" << margin
+              << " frozenReleased=" << frozenMargin;
     }
 }
 
 void SimulationApp::handleReject(const std::string& accountId, const ExecutionReport& report) {
-    // 释放冻结的保证金
+    // 释放全部冻结的保证金（拒绝时释放原始总冻结金额）
     double frozenMargin = 0.0;
     {
         std::lock_guard<std::mutex> lock(mapMutex_);
-        auto it = orderFrozenMarginMap_.find(report.clOrdID);
-        if (it != orderFrozenMarginMap_.end()) {
-            frozenMargin = it->second;
+        auto it = orderMarginInfoMap_.find(report.clOrdID);
+        if (it != orderMarginInfoMap_.end()) {
+            // 拒绝时释放全部原始冻结保证金
+            frozenMargin = it->second.originalFrozenMargin;
         }
     }
     
@@ -532,13 +533,14 @@ void SimulationApp::handleReject(const std::string& accountId, const ExecutionRe
 }
 
 void SimulationApp::handleCancel(const std::string& accountId, const ExecutionReport& report) {
-    // 释放剩余冻结的保证金
+    // 释放剩余未释放的冻结保证金（撤单时只释放未成交部分）
     double frozenMargin = 0.0;
     {
         std::lock_guard<std::mutex> lock(mapMutex_);
-        auto it = orderFrozenMarginMap_.find(report.clOrdID);
-        if (it != orderFrozenMarginMap_.end()) {
-            frozenMargin = it->second;
+        auto it = orderMarginInfoMap_.find(report.clOrdID);
+        if (it != orderMarginInfoMap_.end()) {
+            // 撤单时释放剩余未释放的冻结保证金
+            frozenMargin = it->second.getRemainingFrozen();
         }
     }
     

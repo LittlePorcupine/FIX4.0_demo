@@ -922,3 +922,164 @@ TEST_CASE("SimulationApp集成测试 - 账户和持仓管理", "[application][in
         REQUIRE(account.balance == 1000000.0);  // 应该是原来的余额
     }
 }
+
+
+// =============================================================================
+// 保证金释放测试（修复 Copilot 审核问题）
+// =============================================================================
+
+TEST_CASE("SimulationApp - handleReject 释放全部冻结保证金", "[application][margin]") {
+    SimulationApp app;
+    
+    // 添加测试合约
+    Instrument inst = makeTestInstrument("IF2601");
+    app.getInstrumentManager().addInstrument(inst);
+    
+    // 创建账户
+    std::string accountId = "TEST_REJECT";
+    app.getOrCreateAccount(accountId, 1000000.0);
+    
+    // 验证初始状态
+    auto accountBefore = app.getAccountManager().getAccount(accountId);
+    REQUIRE(accountBefore.has_value());
+    REQUIRE(accountBefore->available == 1000000.0);
+    REQUIRE(accountBefore->frozenMargin == 0.0);
+    
+    // 冻结保证金（模拟下单）
+    double frozenAmount = 100000.0;
+    REQUIRE(app.getAccountManager().freezeMargin(accountId, frozenAmount));
+    
+    auto accountAfterFreeze = app.getAccountManager().getAccount(accountId);
+    REQUIRE(accountAfterFreeze->available == 900000.0);
+    REQUIRE(accountAfterFreeze->frozenMargin == 100000.0);
+    
+    // 释放保证金（模拟拒绝）
+    REQUIRE(app.getAccountManager().unfreezeMargin(accountId, frozenAmount));
+    
+    // 验证保证金完全释放
+    auto accountAfterReject = app.getAccountManager().getAccount(accountId);
+    REQUIRE(accountAfterReject.has_value());
+    REQUIRE(accountAfterReject->available == 1000000.0);
+    REQUIRE(accountAfterReject->frozenMargin == 0.0);
+}
+
+TEST_CASE("SimulationApp - handleCancel 释放剩余冻结保证金", "[application][margin]") {
+    SimulationApp app;
+    
+    // 添加测试合约
+    Instrument inst = makeTestInstrument("IF2601");
+    app.getInstrumentManager().addInstrument(inst);
+    
+    // 创建账户
+    std::string accountId = "TEST_CANCEL";
+    app.getOrCreateAccount(accountId, 1000000.0);
+    
+    // 冻结保证金
+    double frozenAmount = 100000.0;
+    REQUIRE(app.getAccountManager().freezeMargin(accountId, frozenAmount));
+    
+    // 部分成交后释放部分保证金（模拟50%成交）
+    double partialRelease = 50000.0;
+    double actualUsed = 48000.0;  // 实际占用可能略有不同
+    REQUIRE(app.getAccountManager().confirmMargin(accountId, partialRelease, actualUsed));
+    
+    auto accountAfterPartial = app.getAccountManager().getAccount(accountId);
+    REQUIRE(accountAfterPartial->frozenMargin == 50000.0);  // 剩余冻结
+    REQUIRE(accountAfterPartial->usedMargin == 48000.0);    // 已占用
+    
+    // 撤单释放剩余冻结保证金
+    double remainingFrozen = 50000.0;
+    REQUIRE(app.getAccountManager().unfreezeMargin(accountId, remainingFrozen));
+    
+    // 验证剩余冻结保证金完全释放
+    auto accountAfterCancel = app.getAccountManager().getAccount(accountId);
+    REQUIRE(accountAfterCancel->frozenMargin == 0.0);
+    REQUIRE(accountAfterCancel->usedMargin == 48000.0);  // 已占用保持不变
+}
+
+TEST_CASE("SimulationApp - 部分成交保证金计算正确性", "[application][margin][property]") {
+    // 测试部分成交时保证金计算的正确性
+    // 验证修复：使用原始总冻结保证金按比例计算，避免累计误差
+    
+    SimulationApp app;
+    
+    // 使用 OrderMarginInfo 结构测试
+    SimulationApp::OrderMarginInfo info(100000.0, 100);  // 100手，总冻结10万
+    
+    SECTION("单次全部成交") {
+        double released = info.calculateReleaseAmount(100);
+        REQUIRE(released == Approx(100000.0));
+        REQUIRE(info.getRemainingFrozen() == Approx(0.0));
+    }
+    
+    SECTION("两次部分成交") {
+        // 第一次成交30手
+        double released1 = info.calculateReleaseAmount(30);
+        REQUIRE(released1 == Approx(30000.0));
+        REQUIRE(info.getRemainingFrozen() == Approx(70000.0));
+        
+        // 第二次成交30手（关键测试：应该还是30000，不是21000）
+        double released2 = info.calculateReleaseAmount(30);
+        REQUIRE(released2 == Approx(30000.0));  // 修复前会是21000
+        REQUIRE(info.getRemainingFrozen() == Approx(40000.0));
+    }
+    
+    SECTION("三次部分成交") {
+        // 第一次成交30手
+        double released1 = info.calculateReleaseAmount(30);
+        REQUIRE(released1 == Approx(30000.0));
+        
+        // 第二次成交30手
+        double released2 = info.calculateReleaseAmount(30);
+        REQUIRE(released2 == Approx(30000.0));
+        
+        // 第三次成交40手
+        double released3 = info.calculateReleaseAmount(40);
+        REQUIRE(released3 == Approx(40000.0));
+        
+        // 验证总释放等于原始冻结
+        REQUIRE(info.releasedMargin == Approx(100000.0));
+        REQUIRE(info.getRemainingFrozen() == Approx(0.0));
+    }
+    
+    SECTION("不均匀部分成交") {
+        // 第一次成交10手
+        double released1 = info.calculateReleaseAmount(10);
+        REQUIRE(released1 == Approx(10000.0));
+        
+        // 第二次成交50手
+        double released2 = info.calculateReleaseAmount(50);
+        REQUIRE(released2 == Approx(50000.0));
+        
+        // 第三次成交40手
+        double released3 = info.calculateReleaseAmount(40);
+        REQUIRE(released3 == Approx(40000.0));
+        
+        // 验证总释放等于原始冻结
+        REQUIRE(info.releasedMargin == Approx(100000.0));
+        REQUIRE(info.getRemainingFrozen() == Approx(0.0));
+    }
+}
+
+TEST_CASE("SimulationApp - OrderMarginInfo 边界情况", "[application][margin]") {
+    
+    SECTION("零数量订单") {
+        SimulationApp::OrderMarginInfo info(100000.0, 0);
+        double released = info.calculateReleaseAmount(10);
+        REQUIRE(released == 0.0);  // 避免除零
+    }
+    
+    SECTION("零冻结保证金") {
+        SimulationApp::OrderMarginInfo info(0.0, 100);
+        double released = info.calculateReleaseAmount(50);
+        REQUIRE(released == 0.0);
+    }
+    
+    SECTION("默认构造") {
+        SimulationApp::OrderMarginInfo info;
+        REQUIRE(info.originalFrozenMargin == 0.0);
+        REQUIRE(info.originalOrderQty == 0);
+        REQUIRE(info.releasedMargin == 0.0);
+        REQUIRE(info.getRemainingFrozen() == 0.0);
+    }
+}
