@@ -610,3 +610,315 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
     
     engine.stop();
 }
+
+
+// =============================================================================
+// ExecutionReport 属性测试
+// =============================================================================
+
+#include <rapidcheck.h>
+#include <rapidcheck/catch.h>
+#include "app/fix_message_builder.hpp"
+#include "app/instrument.hpp"
+#include "app/account.hpp"
+#include "app/position.hpp"
+#include "app/risk_manager.hpp"
+#include "app/account_manager.hpp"
+#include "app/position_manager.hpp"
+#include "app/instrument_manager.hpp"
+
+namespace {
+
+/**
+ * @brief 创建测试用ExecutionReport
+ */
+ExecutionReport makeTestExecutionReport(
+    const std::string& orderID,
+    const std::string& clOrdID,
+    const std::string& execID,
+    const std::string& symbol,
+    OrderSide side,
+    OrderType ordType,
+    int64_t orderQty,
+    double price,
+    OrderStatus ordStatus,
+    int64_t lastShares = 0,
+    double lastPx = 0.0,
+    int64_t cumQty = 0,
+    double avgPx = 0.0
+) {
+    ExecutionReport report;
+    report.orderID = orderID;
+    report.clOrdID = clOrdID;
+    report.execID = execID;
+    report.symbol = symbol;
+    report.side = side;
+    report.ordType = ordType;
+    report.orderQty = orderQty;
+    report.price = price;
+    report.ordStatus = ordStatus;
+    report.lastShares = lastShares;
+    report.lastPx = lastPx;
+    report.cumQty = cumQty;
+    report.avgPx = avgPx;
+    report.leavesQty = orderQty - cumQty;
+    report.transactTime = std::chrono::system_clock::now();
+    report.execTransType = ExecTransType::NEW;
+    return report;
+}
+
+/**
+ * @brief 创建测试用合约
+ */
+Instrument makeTestInstrument(const std::string& instrumentId) {
+    Instrument inst(instrumentId, "CFFEX", "IF", 0.2, 300, 0.12);
+    inst.updateLimitPrices(5000.0, 3000.0);
+    return inst;
+}
+
+} // anonymous namespace
+
+/**
+ * **Feature: paper-trading-system, Property 17: ExecutionReport生成正确性**
+ * **Validates: Requirements 4.7, 5.4, 6.3**
+ *
+ * *对于任意* 订单状态变化，生成的ExecutionReport应包含正确的订单ID、状态、成交信息
+ */
+TEST_CASE("Property 17: ExecutionReport生成正确性", "[application][property]") {
+    
+    rc::prop("ExecutionReport包含正确的订单标识符",
+        []() {
+            // 生成随机订单标识符
+            auto orderID = *rc::gen::nonEmpty(rc::gen::string<std::string>());
+            auto clOrdID = *rc::gen::nonEmpty(rc::gen::string<std::string>());
+            auto execID = *rc::gen::nonEmpty(rc::gen::string<std::string>());
+            auto symbol = *rc::gen::element(std::string("IF2601"), std::string("IC2601"), std::string("IH2601"));
+            
+            // 生成随机订单参数
+            auto side = *rc::gen::element(OrderSide::BUY, OrderSide::SELL);
+            auto ordType = *rc::gen::element(OrderType::LIMIT, OrderType::MARKET);
+            auto orderQty = *rc::gen::inRange<int64_t>(1, 1000);
+            auto price = *rc::gen::inRange(3000, 5000);
+            auto ordStatus = *rc::gen::element(
+                OrderStatus::NEW, 
+                OrderStatus::PARTIALLY_FILLED, 
+                OrderStatus::FILLED,
+                OrderStatus::CANCELED,
+                OrderStatus::REJECTED
+            );
+            
+            ExecutionReport report = makeTestExecutionReport(
+                orderID, clOrdID, execID, symbol, side, ordType,
+                orderQty, static_cast<double>(price), ordStatus
+            );
+            
+            // 转换为FIX消息
+            FixMessage msg = buildExecutionReport(report);
+            
+            // 验证标识符正确
+            RC_ASSERT(msg.get_string(tags::OrderID) == orderID);
+            RC_ASSERT(msg.get_string(tags::ClOrdID) == clOrdID);
+            RC_ASSERT(msg.get_string(tags::ExecID) == execID);
+            RC_ASSERT(msg.get_string(tags::Symbol) == symbol);
+        });
+    
+    rc::prop("ExecutionReport包含正确的订单状态",
+        []() {
+            auto ordStatus = *rc::gen::element(
+                OrderStatus::NEW, 
+                OrderStatus::PARTIALLY_FILLED, 
+                OrderStatus::FILLED,
+                OrderStatus::CANCELED,
+                OrderStatus::REJECTED
+            );
+            
+            ExecutionReport report = makeTestExecutionReport(
+                "ORD001", "CLO001", "EXE001", "IF2601",
+                OrderSide::BUY, OrderType::LIMIT, 100, 4000.0, ordStatus
+            );
+            
+            FixMessage msg = buildExecutionReport(report);
+            
+            // 验证状态正确
+            std::string expectedStatus = ordStatusToFix(ordStatus);
+            RC_ASSERT(msg.get_string(tags::OrdStatus) == expectedStatus);
+        });
+    
+    rc::prop("ExecutionReport成交信息正确",
+        []() {
+            auto orderQty = *rc::gen::inRange<int64_t>(10, 1000);
+            auto lastShares = *rc::gen::inRange<int64_t>(1, orderQty);
+            auto lastPx = *rc::gen::inRange(3000, 5000);
+            auto cumQty = *rc::gen::inRange<int64_t>(lastShares, orderQty);
+            auto avgPx = *rc::gen::inRange(3000, 5000);
+            
+            // 确保数据有效
+            RC_PRE(lastShares > 0);
+            RC_PRE(cumQty >= lastShares);
+            RC_PRE(cumQty <= orderQty);
+            
+            ExecutionReport report = makeTestExecutionReport(
+                "ORD001", "CLO001", "EXE001", "IF2601",
+                OrderSide::BUY, OrderType::LIMIT, orderQty, 4000.0,
+                OrderStatus::PARTIALLY_FILLED,
+                lastShares, static_cast<double>(lastPx),
+                cumQty, static_cast<double>(avgPx)
+            );
+            
+            FixMessage msg = buildExecutionReport(report);
+            
+            // 验证成交信息
+            RC_ASSERT(std::stoll(msg.get_string(tags::OrderQty)) == orderQty);
+            RC_ASSERT(std::stoll(msg.get_string(tags::CumQty)) == cumQty);
+            RC_ASSERT(std::stoll(msg.get_string(tags::LastShares)) == lastShares);
+            RC_ASSERT(std::stod(msg.get_string(tags::LastPx)) == Approx(static_cast<double>(lastPx)));
+            RC_ASSERT(std::stod(msg.get_string(tags::AvgPx)) == Approx(static_cast<double>(avgPx)));
+        });
+    
+    rc::prop("ExecutionReport买卖方向正确",
+        []() {
+            auto side = *rc::gen::element(OrderSide::BUY, OrderSide::SELL);
+            
+            ExecutionReport report = makeTestExecutionReport(
+                "ORD001", "CLO001", "EXE001", "IF2601",
+                side, OrderType::LIMIT, 100, 4000.0, OrderStatus::NEW
+            );
+            
+            FixMessage msg = buildExecutionReport(report);
+            
+            // 验证买卖方向
+            std::string expectedSide = sideToFix(side);
+            RC_ASSERT(msg.get_string(tags::Side) == expectedSide);
+        });
+    
+    rc::prop("ExecutionReport订单类型正确",
+        []() {
+            auto ordType = *rc::gen::element(OrderType::LIMIT, OrderType::MARKET);
+            auto price = ordType == OrderType::LIMIT ? 4000.0 : 0.0;
+            
+            ExecutionReport report = makeTestExecutionReport(
+                "ORD001", "CLO001", "EXE001", "IF2601",
+                OrderSide::BUY, ordType, 100, price, OrderStatus::NEW
+            );
+            
+            FixMessage msg = buildExecutionReport(report);
+            
+            // 验证订单类型
+            std::string expectedOrdType = ordTypeToFix(ordType);
+            RC_ASSERT(msg.get_string(tags::OrdType) == expectedOrdType);
+            
+            // 限价单应包含价格
+            if (ordType == OrderType::LIMIT && price > 0) {
+                RC_ASSERT(msg.has(tags::Price));
+            }
+        });
+}
+
+TEST_CASE("Property 17: ExecutionReport拒绝信息正确", "[application][property]") {
+    
+    rc::prop("拒绝订单包含拒绝原因",
+        []() {
+            auto rejectReason = *rc::gen::inRange(1, 10);
+            auto rejectText = *rc::gen::nonEmpty(rc::gen::string<std::string>());
+            
+            ExecutionReport report = makeTestExecutionReport(
+                "ORD001", "CLO001", "EXE001", "IF2601",
+                OrderSide::BUY, OrderType::LIMIT, 100, 4000.0, OrderStatus::REJECTED
+            );
+            report.ordRejReason = rejectReason;
+            report.text = rejectText;
+            
+            FixMessage msg = buildExecutionReport(report);
+            
+            // 验证拒绝原因
+            RC_ASSERT(msg.has(tags::OrdRejReason));
+            RC_ASSERT(std::stoi(msg.get_string(tags::OrdRejReason)) == rejectReason);
+            RC_ASSERT(msg.get_string(tags::Text) == rejectText);
+        });
+}
+
+TEST_CASE("Property 17: ExecutionReport撤单信息正确", "[application][property]") {
+    
+    rc::prop("撤单报告包含原订单ID",
+        []() {
+            auto origClOrdID = *rc::gen::nonEmpty(rc::gen::string<std::string>());
+            
+            ExecutionReport report = makeTestExecutionReport(
+                "ORD001", "CANCEL001", "EXE001", "IF2601",
+                OrderSide::BUY, OrderType::LIMIT, 100, 4000.0, OrderStatus::CANCELED
+            );
+            report.origClOrdID = origClOrdID;
+            
+            FixMessage msg = buildExecutionReport(report);
+            
+            // 验证原订单ID
+            RC_ASSERT(msg.has(tags::OrigClOrdID));
+            RC_ASSERT(msg.get_string(tags::OrigClOrdID) == origClOrdID);
+        });
+}
+
+TEST_CASE("SimulationApp集成测试 - 风控检查", "[application][integration]") {
+    SimulationApp app;
+    
+    // 添加测试合约
+    Instrument inst = makeTestInstrument("IF2601");
+    app.getInstrumentManager().addInstrument(inst);
+    
+    app.start();
+    
+    SessionID sid("CLIENT", "SERVER");
+    
+    SECTION("合约不存在时拒绝订单") {
+        FixMessage order;
+        order.set(tags::MsgType, "D");
+        order.set(tags::ClOrdID, "ORDER001");
+        order.set(tags::Symbol, "UNKNOWN");  // 不存在的合约
+        order.set(tags::Side, "1");
+        order.set(tags::OrderQty, "100");
+        order.set(tags::Price, "4000.0");
+        order.set(tags::OrdType, "2");
+        
+        // 应该不抛异常
+        REQUIRE_NOTHROW(app.fromApp(order, sid));
+    }
+    
+    SECTION("有效订单通过风控检查") {
+        // 创建账户
+        app.getOrCreateAccount("CLIENT", 1000000.0);
+        
+        FixMessage order;
+        order.set(tags::MsgType, "D");
+        order.set(tags::ClOrdID, "ORDER002");
+        order.set(tags::Symbol, "IF2601");
+        order.set(tags::Side, "1");
+        order.set(tags::OrderQty, "1");
+        order.set(tags::Price, "4000.0");
+        order.set(tags::OrdType, "2");
+        
+        REQUIRE_NOTHROW(app.fromApp(order, sid));
+    }
+    
+    app.stop();
+}
+
+TEST_CASE("SimulationApp集成测试 - 账户和持仓管理", "[application][integration]") {
+    SimulationApp app;
+    
+    // 添加测试合约
+    Instrument inst = makeTestInstrument("IF2601");
+    app.getInstrumentManager().addInstrument(inst);
+    
+    SECTION("创建账户") {
+        Account account = app.getOrCreateAccount("TEST001", 500000.0);
+        REQUIRE(account.accountId == "TEST001");
+        REQUIRE(account.balance == 500000.0);
+        REQUIRE(account.available == 500000.0);
+    }
+    
+    SECTION("获取已存在的账户") {
+        app.getOrCreateAccount("TEST002", 1000000.0);
+        Account account = app.getOrCreateAccount("TEST002", 500000.0);  // 不同的初始余额
+        REQUIRE(account.accountId == "TEST002");
+        REQUIRE(account.balance == 1000000.0);  // 应该是原来的余额
+    }
+}

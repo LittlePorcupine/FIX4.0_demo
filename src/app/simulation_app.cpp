@@ -1,12 +1,20 @@
 /**
  * @file simulation_app.cpp
  * @brief 模拟交易应用层实现
+ * 
+ * 集成AccountManager、PositionManager、InstrumentManager、RiskManager，
+ * 实现完整的模拟交易流程：
+ * 1. 接收FIX订单消息
+ * 2. 风控检查
+ * 3. 提交撮合引擎
+ * 4. 处理成交回报，更新账户和持仓
  */
 
 #include "app/simulation_app.hpp"
 #include "app/fix_message_builder.hpp"
 #include "fix/fix_tags.hpp"
 #include "base/logger.hpp"
+#include "storage/store.hpp"
 #include <cstdlib>
 
 namespace fix40 {
@@ -156,7 +164,25 @@ CancelRequest parseCancelRequest(const FixMessage& msg, const SessionID& session
 // SimulationApp 实现
 // ============================================================================
 
-SimulationApp::SimulationApp() {
+SimulationApp::SimulationApp()
+    : store_(nullptr) {
+    initializeManagers();
+}
+
+SimulationApp::SimulationApp(IStore* store)
+    : accountManager_(store)
+    , positionManager_(store)
+    , store_(store) {
+    initializeManagers();
+}
+
+void SimulationApp::initializeManagers() {
+    // 设置撮合引擎与各管理器的关联
+    engine_.setRiskManager(&riskManager_);
+    engine_.setAccountManager(&accountManager_);
+    engine_.setPositionManager(&positionManager_);
+    engine_.setInstrumentManager(&instrumentManager_);
+    
     // 设置 ExecutionReport 回调
     engine_.setExecutionReportCallback(
         [this](const SessionID& sid, const ExecutionReport& rpt) {
@@ -196,12 +222,142 @@ void SimulationApp::fromApp(const FixMessage& msg, const SessionID& sessionID) {
     if (msgType == "D") {
         // NewOrderSingle
         ParseResult result = parseNewOrderSingle(msg, sessionID);
-        if (result.success) {
-            engine_.submit(OrderEvent::newOrder(result.order));
-        } else {
-            LOG() << "[SimulationApp] Rejected NewOrderSingle: " << result.error;
-            // TODO: 发送 ExecutionReport 拒绝订单
+        if (!result.success) {
+            LOG() << "[SimulationApp] Parse failed: " << result.error;
+            // 发送拒绝报告
+            ExecutionReport reject;
+            reject.clOrdID = msg.has(tags::ClOrdID) ? msg.get_string(tags::ClOrdID) : "";
+            reject.symbol = msg.has(tags::Symbol) ? msg.get_string(tags::Symbol) : "";
+            reject.ordStatus = OrderStatus::REJECTED;
+            reject.execTransType = ExecTransType::NEW;
+            reject.ordRejReason = 99;  // 其他原因
+            reject.text = result.error;
+            reject.transactTime = std::chrono::system_clock::now();
+            onExecutionReport(sessionID, reject);
+            return;
         }
+        
+        Order& order = result.order;
+        std::string accountId = extractAccountId(sessionID);
+        
+        // 确保账户存在
+        getOrCreateAccount(accountId);
+        
+        // 获取合约信息
+        const Instrument* instrument = instrumentManager_.getInstrument(order.symbol);
+        if (!instrument) {
+            LOG() << "[SimulationApp] Instrument not found: " << order.symbol;
+            ExecutionReport reject;
+            reject.clOrdID = order.clOrdID;
+            reject.symbol = order.symbol;
+            reject.side = order.side;
+            reject.ordType = order.ordType;
+            reject.orderQty = order.orderQty;
+            reject.price = order.price;
+            reject.ordStatus = OrderStatus::REJECTED;
+            reject.execTransType = ExecTransType::NEW;
+            reject.ordRejReason = static_cast<int>(RejectReason::INSTRUMENT_NOT_FOUND);
+            reject.text = "Instrument not found: " + order.symbol;
+            reject.transactTime = std::chrono::system_clock::now();
+            onExecutionReport(sessionID, reject);
+            return;
+        }
+        
+        // 获取账户和持仓信息
+        auto accountOpt = accountManager_.getAccount(accountId);
+        if (!accountOpt) {
+            LOG() << "[SimulationApp] Account not found: " << accountId;
+            return;
+        }
+        
+        Position position;
+        auto posOpt = positionManager_.getPosition(accountId, order.symbol);
+        if (posOpt) {
+            position = *posOpt;
+        } else {
+            position.accountId = accountId;
+            position.instrumentId = order.symbol;
+        }
+        
+        // 获取行情快照
+        MarketDataSnapshot snapshot;
+        const MarketDataSnapshot* snapshotPtr = engine_.getMarketSnapshot(order.symbol);
+        if (snapshotPtr) {
+            snapshot = *snapshotPtr;
+        } else {
+            snapshot.instrumentId = order.symbol;
+            // 使用涨跌停价作为默认值
+            snapshot.upperLimitPrice = instrument->upperLimitPrice;
+            snapshot.lowerLimitPrice = instrument->lowerLimitPrice;
+        }
+        
+        // 判断开平标志（简化处理：买单开多/平空，卖单开空/平多）
+        OffsetFlag offsetFlag = OffsetFlag::OPEN;
+        if (order.side == OrderSide::BUY && position.shortPosition > 0) {
+            offsetFlag = OffsetFlag::CLOSE;  // 买单平空
+        } else if (order.side == OrderSide::SELL && position.longPosition > 0) {
+            offsetFlag = OffsetFlag::CLOSE;  // 卖单平多
+        }
+        
+        // 风控检查
+        CheckResult checkResult = riskManager_.checkOrder(
+            order, *accountOpt, position, *instrument, snapshot, offsetFlag);
+        
+        if (!checkResult.passed) {
+            LOG() << "[SimulationApp] Risk check failed: " << checkResult.rejectText;
+            ExecutionReport reject;
+            reject.clOrdID = order.clOrdID;
+            reject.symbol = order.symbol;
+            reject.side = order.side;
+            reject.ordType = order.ordType;
+            reject.orderQty = order.orderQty;
+            reject.price = order.price;
+            reject.ordStatus = OrderStatus::REJECTED;
+            reject.execTransType = ExecTransType::NEW;
+            reject.ordRejReason = static_cast<int>(checkResult.rejectReason);
+            reject.text = checkResult.rejectText;
+            reject.transactTime = std::chrono::system_clock::now();
+            onExecutionReport(sessionID, reject);
+            return;
+        }
+        
+        // 开仓订单：冻结保证金
+        if (offsetFlag == OffsetFlag::OPEN) {
+            double requiredMargin = riskManager_.calculateRequiredMargin(order, *instrument);
+            if (!accountManager_.freezeMargin(accountId, requiredMargin)) {
+                LOG() << "[SimulationApp] Failed to freeze margin: " << requiredMargin;
+                ExecutionReport reject;
+                reject.clOrdID = order.clOrdID;
+                reject.symbol = order.symbol;
+                reject.side = order.side;
+                reject.ordType = order.ordType;
+                reject.orderQty = order.orderQty;
+                reject.price = order.price;
+                reject.ordStatus = OrderStatus::REJECTED;
+                reject.execTransType = ExecTransType::NEW;
+                reject.ordRejReason = static_cast<int>(RejectReason::INSUFFICIENT_FUNDS);
+                reject.text = "Failed to freeze margin";
+                reject.transactTime = std::chrono::system_clock::now();
+                onExecutionReport(sessionID, reject);
+                return;
+            }
+            
+            // 记录订单的冻结保证金
+            {
+                std::lock_guard<std::mutex> lock(mapMutex_);
+                orderFrozenMarginMap_[order.clOrdID] = requiredMargin;
+            }
+        }
+        
+        // 记录订单到账户的映射
+        {
+            std::lock_guard<std::mutex> lock(mapMutex_);
+            orderAccountMap_[order.clOrdID] = accountId;
+        }
+        
+        // 提交到撮合引擎
+        engine_.submit(OrderEvent::newOrder(order));
+        
     } else if (msgType == "F") {
         // OrderCancelRequest
         CancelRequest req = parseCancelRequest(msg, sessionID);
@@ -222,6 +378,45 @@ void SimulationApp::onExecutionReport(const SessionID& sessionID, const Executio
           << " ClOrdID=" << report.clOrdID
           << " OrdStatus=" << static_cast<int>(report.ordStatus);
     
+    // 获取账户ID
+    std::string accountId;
+    {
+        std::lock_guard<std::mutex> lock(mapMutex_);
+        auto it = orderAccountMap_.find(report.clOrdID);
+        if (it != orderAccountMap_.end()) {
+            accountId = it->second;
+        } else {
+            accountId = extractAccountId(sessionID);
+        }
+    }
+    
+    // 根据订单状态处理账户和持仓更新
+    switch (report.ordStatus) {
+        case OrderStatus::FILLED:
+        case OrderStatus::PARTIALLY_FILLED:
+            if (report.lastShares > 0) {
+                handleFill(accountId, report);
+            }
+            break;
+        case OrderStatus::REJECTED:
+            handleReject(accountId, report);
+            break;
+        case OrderStatus::CANCELED:
+            handleCancel(accountId, report);
+            break;
+        default:
+            break;
+    }
+    
+    // 清理已完成订单的映射
+    if (report.ordStatus == OrderStatus::FILLED ||
+        report.ordStatus == OrderStatus::REJECTED ||
+        report.ordStatus == OrderStatus::CANCELED) {
+        std::lock_guard<std::mutex> lock(mapMutex_);
+        orderAccountMap_.erase(report.clOrdID);
+        orderFrozenMarginMap_.erase(report.clOrdID);
+    }
+    
     // 将 ExecutionReport 转换为 FIX 消息
     FixMessage msg = buildExecutionReport(report);
     
@@ -230,6 +425,140 @@ void SimulationApp::onExecutionReport(const SessionID& sessionID, const Executio
         LOG() << "[SimulationApp] Failed to send ExecutionReport: session not found "
               << sessionID.to_string();
     }
+}
+
+void SimulationApp::handleFill(const std::string& accountId, const ExecutionReport& report) {
+    // 获取合约信息
+    const Instrument* instrument = instrumentManager_.getInstrument(report.symbol);
+    if (!instrument) {
+        LOG() << "[SimulationApp] handleFill: Instrument not found: " << report.symbol;
+        return;
+    }
+    
+    // 获取持仓信息
+    Position position;
+    auto posOpt = positionManager_.getPosition(accountId, report.symbol);
+    if (posOpt) {
+        position = *posOpt;
+    } else {
+        position.accountId = accountId;
+        position.instrumentId = report.symbol;
+    }
+    
+    // 判断开平标志
+    bool isClose = false;
+    if (report.side == OrderSide::BUY && position.shortPosition > 0) {
+        isClose = true;  // 买单平空
+    } else if (report.side == OrderSide::SELL && position.longPosition > 0) {
+        isClose = true;  // 卖单平多
+    }
+    
+    if (isClose) {
+        // 平仓处理
+        double closeProfit = positionManager_.closePosition(
+            accountId, report.symbol, report.side,
+            report.lastShares, report.lastPx, instrument->volumeMultiple);
+        
+        // 计算释放的保证金
+        double releasedMargin = 0.0;
+        if (report.side == OrderSide::BUY) {
+            // 平空头，释放空头保证金
+            releasedMargin = report.lastPx * report.lastShares * 
+                             instrument->volumeMultiple * instrument->marginRate;
+        } else {
+            // 平多头，释放多头保证金
+            releasedMargin = report.lastPx * report.lastShares * 
+                             instrument->volumeMultiple * instrument->marginRate;
+        }
+        
+        // 释放占用保证金
+        accountManager_.releaseMargin(accountId, releasedMargin);
+        
+        // 记录平仓盈亏
+        accountManager_.addCloseProfit(accountId, closeProfit);
+        
+        LOG() << "[SimulationApp] Close position: " << report.symbol
+              << " side=" << static_cast<int>(report.side)
+              << " qty=" << report.lastShares
+              << " price=" << report.lastPx
+              << " profit=" << closeProfit;
+    } else {
+        // 开仓处理
+        double margin = instrument->calculateMargin(report.lastPx, report.lastShares);
+        
+        // 获取冻结的保证金
+        double frozenMargin = 0.0;
+        {
+            std::lock_guard<std::mutex> lock(mapMutex_);
+            auto it = orderFrozenMarginMap_.find(report.clOrdID);
+            if (it != orderFrozenMarginMap_.end()) {
+                // 按成交比例计算应转换的冻结保证金
+                frozenMargin = it->second * report.lastShares / report.orderQty;
+                it->second -= frozenMargin;  // 减少剩余冻结
+            }
+        }
+        
+        // 冻结转占用
+        accountManager_.confirmMargin(accountId, frozenMargin, margin);
+        
+        // 开仓
+        positionManager_.openPosition(
+            accountId, report.symbol, report.side,
+            report.lastShares, report.lastPx, margin);
+        
+        LOG() << "[SimulationApp] Open position: " << report.symbol
+              << " side=" << static_cast<int>(report.side)
+              << " qty=" << report.lastShares
+              << " price=" << report.lastPx
+              << " margin=" << margin;
+    }
+}
+
+void SimulationApp::handleReject(const std::string& accountId, const ExecutionReport& report) {
+    // 释放冻结的保证金
+    double frozenMargin = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(mapMutex_);
+        auto it = orderFrozenMarginMap_.find(report.clOrdID);
+        if (it != orderFrozenMarginMap_.end()) {
+            frozenMargin = it->second;
+        }
+    }
+    
+    if (frozenMargin > 0) {
+        accountManager_.unfreezeMargin(accountId, frozenMargin);
+        LOG() << "[SimulationApp] Released frozen margin on reject: " << frozenMargin;
+    }
+}
+
+void SimulationApp::handleCancel(const std::string& accountId, const ExecutionReport& report) {
+    // 释放剩余冻结的保证金
+    double frozenMargin = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(mapMutex_);
+        auto it = orderFrozenMarginMap_.find(report.clOrdID);
+        if (it != orderFrozenMarginMap_.end()) {
+            frozenMargin = it->second;
+        }
+    }
+    
+    if (frozenMargin > 0) {
+        accountManager_.unfreezeMargin(accountId, frozenMargin);
+        LOG() << "[SimulationApp] Released frozen margin on cancel: " << frozenMargin;
+    }
+}
+
+std::string SimulationApp::extractAccountId(const SessionID& sessionID) const {
+    // 使用SenderCompID作为账户ID
+    return sessionID.senderCompID;
+}
+
+Account SimulationApp::getOrCreateAccount(const std::string& accountId, double initialBalance) {
+    auto accountOpt = accountManager_.getAccount(accountId);
+    if (accountOpt) {
+        return *accountOpt;
+    }
+    return accountManager_.createAccount(accountId, initialBalance);
 }
 
 } // namespace fix40

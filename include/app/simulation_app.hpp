@@ -5,6 +5,12 @@
  * 提供一个线程安全的 Application 实现，演示最佳实践：
  * - fromApp() 只做轻量的入队操作
  * - 业务逻辑由独立的撮合引擎线程处理
+ * 
+ * 集成以下模块：
+ * - AccountManager: 账户管理
+ * - PositionManager: 持仓管理
+ * - InstrumentManager: 合约信息管理
+ * - RiskManager: 风险控制
  */
 
 #pragma once
@@ -12,8 +18,18 @@
 #include "fix/application.hpp"
 #include "fix/session_manager.hpp"
 #include "app/matching_engine.hpp"
+#include "app/account_manager.hpp"
+#include "app/position_manager.hpp"
+#include "app/instrument_manager.hpp"
+#include "app/risk_manager.hpp"
+#include <memory>
+#include <unordered_map>
+#include <mutex>
 
 namespace fix40 {
+
+// 前向声明
+class IStore;
 
 /**
  * @class SimulationApp
@@ -28,6 +44,12 @@ namespace fix40 {
  * - 所有订单处理在单线程中串行执行，无需加锁
  * - 异常隔离：撮合引擎的异常不会影响网络层
  *
+ * @par 集成模块
+ * - AccountManager: 账户管理（资金冻结/释放）
+ * - PositionManager: 持仓管理（开仓/平仓）
+ * - InstrumentManager: 合约信息管理
+ * - RiskManager: 风险控制（资金/价格/持仓检查）
+ *
  * @par 支持的消息类型
  * - D: NewOrderSingle (新订单)
  * - F: OrderCancelRequest (撤单请求)
@@ -35,7 +57,12 @@ namespace fix40 {
  *
  * @par 使用示例
  * @code
- * SimulationApp app;
+ * IStore* store = ...;  // 存储接口
+ * SimulationApp app(store);
+ * 
+ * // 加载合约配置
+ * app.getInstrumentManager().loadFromConfig("config/instruments.json");
+ * 
  * app.start();  // 启动撮合引擎
  * 
  * session->set_application(&app);
@@ -47,9 +74,16 @@ namespace fix40 {
 class SimulationApp : public Application {
 public:
     /**
-     * @brief 构造模拟交易应用
+     * @brief 默认构造函数（不带持久化）
      */
     SimulationApp();
+
+    /**
+     * @brief 带存储接口的构造函数
+     * 
+     * @param store 存储接口指针，用于账户和持仓的持久化
+     */
+    explicit SimulationApp(IStore* store);
 
     /**
      * @brief 析构函数
@@ -120,18 +154,133 @@ public:
      */
     SessionManager& getSessionManager() { return sessionManager_; }
 
+    // =========================================================================
+    // 管理器访问接口
+    // =========================================================================
+
+    /**
+     * @brief 获取账户管理器
+     * @return AccountManager& 账户管理器引用
+     */
+    AccountManager& getAccountManager() { return accountManager_; }
+
+    /**
+     * @brief 获取持仓管理器
+     * @return PositionManager& 持仓管理器引用
+     */
+    PositionManager& getPositionManager() { return positionManager_; }
+
+    /**
+     * @brief 获取合约管理器
+     * @return InstrumentManager& 合约管理器引用
+     */
+    InstrumentManager& getInstrumentManager() { return instrumentManager_; }
+
+    /**
+     * @brief 获取风控管理器
+     * @return RiskManager& 风控管理器引用
+     */
+    RiskManager& getRiskManager() { return riskManager_; }
+
+    /**
+     * @brief 获取撮合引擎
+     * @return MatchingEngine& 撮合引擎引用
+     */
+    MatchingEngine& getMatchingEngine() { return engine_; }
+
+    // =========================================================================
+    // 账户操作接口
+    // =========================================================================
+
+    /**
+     * @brief 创建或获取账户
+     * 
+     * 如果账户不存在，创建一个新账户；否则返回现有账户。
+     * 
+     * @param accountId 账户ID
+     * @param initialBalance 初始余额（仅在创建时使用）
+     * @return Account 账户信息
+     */
+    Account getOrCreateAccount(const std::string& accountId, double initialBalance = 1000000.0);
+
 private:
+    /**
+     * @brief 初始化各管理器
+     * 
+     * 设置撮合引擎与各管理器的关联。
+     */
+    void initializeManagers();
+
     /**
      * @brief ExecutionReport 回调处理
      * @param sessionID 目标会话
      * @param report 执行报告
      *
      * 将 ExecutionReport 转换为 FIX 消息并发送到客户端。
+     * 同时更新账户和持仓状态。
      */
     void onExecutionReport(const SessionID& sessionID, const ExecutionReport& report);
 
-    MatchingEngine engine_;           ///< 撮合引擎
-    SessionManager sessionManager_;   ///< 会话管理器
+    /**
+     * @brief 处理订单成交
+     * 
+     * 更新账户资金和持仓状态。
+     * 
+     * @param accountId 账户ID
+     * @param report 执行报告
+     */
+    void handleFill(const std::string& accountId, const ExecutionReport& report);
+
+    /**
+     * @brief 处理订单拒绝
+     * 
+     * 释放冻结的保证金。
+     * 
+     * @param accountId 账户ID
+     * @param report 执行报告
+     */
+    void handleReject(const std::string& accountId, const ExecutionReport& report);
+
+    /**
+     * @brief 处理订单撤销
+     * 
+     * 释放冻结的保证金。
+     * 
+     * @param accountId 账户ID
+     * @param report 执行报告
+     */
+    void handleCancel(const std::string& accountId, const ExecutionReport& report);
+
+    /**
+     * @brief 从SessionID提取账户ID
+     * 
+     * @param sessionID 会话ID
+     * @return 账户ID（使用SenderCompID）
+     */
+    std::string extractAccountId(const SessionID& sessionID) const;
+
+    // =========================================================================
+    // 成员变量
+    // =========================================================================
+
+    MatchingEngine engine_;              ///< 撮合引擎
+    SessionManager sessionManager_;      ///< 会话管理器
+    
+    AccountManager accountManager_;      ///< 账户管理器
+    PositionManager positionManager_;    ///< 持仓管理器
+    InstrumentManager instrumentManager_; ///< 合约管理器
+    RiskManager riskManager_;            ///< 风控管理器
+    
+    IStore* store_ = nullptr;            ///< 存储接口（可为nullptr）
+
+    /// 订单到账户的映射：clOrdID -> accountId
+    std::unordered_map<std::string, std::string> orderAccountMap_;
+    
+    /// 订单冻结保证金映射：clOrdID -> frozenMargin
+    std::unordered_map<std::string, double> orderFrozenMarginMap_;
+    
+    /// 互斥锁，保护映射表
+    mutable std::mutex mapMutex_;
 };
 
 } // namespace fix40
