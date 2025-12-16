@@ -90,6 +90,7 @@ add_executable(unit_tests
     unit/test_account_manager.cpp
     unit/test_position_manager.cpp
     unit/test_risk_manager.cpp
+    unit/test_matching_engine.cpp
 )
 
 target_link_libraries(unit_tests PRIVATE fix_engine_test)
