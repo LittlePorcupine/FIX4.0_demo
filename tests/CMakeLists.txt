@@ -79,6 +79,9 @@ add_executable(unit_tests
     unit/test_sqlite_store.cpp
     # RapidCheck 属性测试
     unit/test_rapidcheck_integration.cpp
+    unit/test_account.cpp
+    unit/test_position.cpp
+    unit/test_instrument.cpp
 )
 
 target_link_libraries(unit_tests PRIVATE fix_engine_test)
