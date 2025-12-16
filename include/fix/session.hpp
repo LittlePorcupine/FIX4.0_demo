@@ -344,7 +344,14 @@ public:
     /** @brief 设置接收序列号 */
     void set_recv_seq_num(int seq) { recvSeqNum = seq; }
 
-    /** @brief 设置发送序列号 */
+    /**
+     * @brief 设置发送序列号
+     * @param seq 新的发送序列号
+     *
+     * 用于断线恢复时从存储中恢复序列号状态。
+     * 注意：正常发送流程中不应直接调用此方法，
+     * 序列号由 send() 方法自动管理。
+     */
     void set_send_seq_num(int seq) { sendSeqNum = seq; }
 
     // --- 断线恢复相关 ---

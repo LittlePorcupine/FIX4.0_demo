@@ -516,8 +516,12 @@ EstablishedState::EstablishedState() : messageHandlers_({
 }) {}
 
 void EstablishedState::onMessageReceived(Session& context, const FixMessage& msg) {
-    context.increment_recv_seq_num();
     const std::string msg_type = msg.get_string(tags::MsgType);
+    
+    // SequenceReset 消息不递增 recvSeqNum，由 handleSequenceReset 处理序列号更新
+    if (msg_type != "4") {
+        context.increment_recv_seq_num();
+    }
     
     auto it = messageHandlers_.find(msg_type);
     if (it != messageHandlers_.end()) {
@@ -714,10 +718,19 @@ void EstablishedState::handleResendRequest(Session& context, const FixMessage& m
 
 void EstablishedState::handleSequenceReset(Session& context, const FixMessage& msg) {
     int new_seq_no = msg.get_int(tags::NewSeqNo);
+    int msg_seq_num = msg.get_int(tags::MsgSeqNum);
     bool is_gap_fill = msg.has(tags::GapFillFlag) && msg.get_string(tags::GapFillFlag) == "Y";
     
-    LOG() << "Received SequenceReset: NewSeqNo=" << new_seq_no 
+    LOG() << "Received SequenceReset: MsgSeqNum=" << msg_seq_num 
+          << ", NewSeqNo=" << new_seq_no 
           << ", GapFill=" << (is_gap_fill ? "Y" : "N");
+    
+    // 基本验证：NewSeqNo 必须大于 0
+    if (new_seq_no <= 0) {
+        LOG() << "Error: Invalid NewSeqNo=" << new_seq_no << ". Must be positive.";
+        context.perform_shutdown("Invalid SequenceReset: NewSeqNo must be positive");
+        return;
+    }
     
     if (is_gap_fill) {
         // GapFill 模式：只能向前移动序列号
@@ -730,7 +743,7 @@ void EstablishedState::handleSequenceReset(Session& context, const FixMessage& m
                   << " is less than expected " << current_recv_seq << ". Ignoring.";
         }
     } else {
-        // Reset 模式：可以重置到任意值
+        // Reset 模式：可以重置到任意值（但仍需大于 0，已在上面验证）
         context.set_recv_seq_num(new_seq_no);
         LOG() << "Reset expected receive sequence number to " << new_seq_no;
     }
@@ -775,8 +788,8 @@ void Session::send_resend_request(int begin_seq_no, int end_seq_no) {
 void Session::send_sequence_reset_gap_fill(int seq_num, int new_seq_no) {
     auto sr_msg = create_sequence_reset_message(senderCompID, targetCompID, seq_num, new_seq_no, true);
     
-    // GapFill 消息需要设置 PossDupFlag
-    sr_msg.set(tags::PossDupFlag, "Y");
+    // 注意：根据 FIX 协议，SequenceReset-GapFill 消息不应设置 PossDupFlag="Y"
+    // GapFill 是一种特殊消息，用于跳过序列号，而不是重传
     
     // 直接编码发送，不递增序列号（因为这是重传流程的一部分）
     std::string raw_msg = codec_.encode(sr_msg);

@@ -198,7 +198,7 @@ inline FixMessage create_sequence_reset_message(const std::string& sender,
 /**
  * @brief 判断消息类型是否为管理消息
  * @param msg_type 消息类型
- * @return true 如果是管理消息（Heartbeat、TestRequest、Logon、Logout、ResendRequest、SequenceReset）
+ * @return true 如果是管理消息（Heartbeat、TestRequest、ResendRequest、SequenceReset、Logout、Logon）
  *
  * 管理消息在重传时应使用 SequenceReset-GapFill 跳过，而不是重新发送。
  */
