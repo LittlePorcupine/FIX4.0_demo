@@ -60,6 +60,21 @@ public:
         int beginSeqNum, int endSeqNum) override;
     bool deleteMessagesOlderThan(int64_t timestamp) override;
 
+    // 账户存储
+    bool saveAccount(const Account& account) override;
+    std::optional<Account> loadAccount(const std::string& accountId) override;
+    std::vector<Account> loadAllAccounts() override;
+    bool deleteAccount(const std::string& accountId) override;
+
+    // 持仓存储
+    bool savePosition(const Position& position) override;
+    std::optional<Position> loadPosition(
+        const std::string& accountId, const std::string& instrumentId) override;
+    std::vector<Position> loadPositionsByAccount(const std::string& accountId) override;
+    std::vector<Position> loadAllPositions() override;
+    bool deletePosition(const std::string& accountId, const std::string& instrumentId) override;
+    bool deletePositionsByAccount(const std::string& accountId) override;
+
 private:
     /**
      * @brief 初始化数据库表
@@ -80,6 +95,16 @@ private:
      * @brief 从 SQLite 结果行提取 StoredTrade 对象
      */
     StoredTrade extractTrade(sqlite3_stmt* stmt);
+
+    /**
+     * @brief 从 SQLite 结果行提取 Account 对象
+     */
+    Account extractAccount(sqlite3_stmt* stmt);
+
+    /**
+     * @brief 从 SQLite 结果行提取 Position 对象
+     */
+    Position extractPosition(sqlite3_stmt* stmt);
 
     sqlite3* db_ = nullptr;
     mutable std::mutex mutex_;

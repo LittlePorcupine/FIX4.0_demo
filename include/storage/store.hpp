@@ -2,7 +2,7 @@
  * @file store.hpp
  * @brief 持久化存储抽象接口
  *
- * 定义订单、成交、消息等数据的存储接口。
+ * 定义订单、成交、消息、账户、持仓等数据的存储接口。
  */
 
 #pragma once
@@ -12,6 +12,8 @@
 #include <optional>
 #include <cstdint>
 #include "app/order.hpp"
+#include "app/account.hpp"
+#include "app/position.hpp"
 
 namespace fix40 {
 
@@ -96,6 +98,121 @@ public:
         const std::string& senderCompID, const std::string& targetCompID,
         int beginSeqNum, int endSeqNum) = 0;
     virtual bool deleteMessagesOlderThan(int64_t timestamp) = 0;
+
+    // =========================================================================
+    // 账户存储
+    // =========================================================================
+    
+    /**
+     * @brief 保存账户信息
+     * 
+     * 将账户状态持久化到数据库。如果账户已存在则更新，否则插入新记录。
+     * 
+     * @param account 要保存的账户对象
+     * @return 保存成功返回 true，失败返回 false
+     * 
+     * @note 此方法使用 INSERT OR REPLACE 语义，确保幂等性
+     */
+    virtual bool saveAccount(const Account& account) = 0;
+    
+    /**
+     * @brief 加载账户信息
+     * 
+     * 从数据库加载指定账户的状态。
+     * 
+     * @param accountId 账户ID
+     * @return 如果账户存在返回 Account 对象，否则返回 std::nullopt
+     */
+    virtual std::optional<Account> loadAccount(const std::string& accountId) = 0;
+    
+    /**
+     * @brief 加载所有账户
+     * 
+     * 从数据库加载所有账户信息。
+     * 
+     * @return 账户列表
+     */
+    virtual std::vector<Account> loadAllAccounts() = 0;
+    
+    /**
+     * @brief 删除账户
+     * 
+     * 从数据库删除指定账户。
+     * 
+     * @param accountId 账户ID
+     * @return 删除成功返回 true，失败返回 false
+     * 
+     * @warning 删除账户不会自动删除关联的持仓数据，需要单独处理
+     */
+    virtual bool deleteAccount(const std::string& accountId) = 0;
+
+    // =========================================================================
+    // 持仓存储
+    // =========================================================================
+    
+    /**
+     * @brief 保存持仓信息
+     * 
+     * 将持仓状态持久化到数据库。如果持仓已存在则更新，否则插入新记录。
+     * 
+     * @param position 要保存的持仓对象
+     * @return 保存成功返回 true，失败返回 false
+     * 
+     * @note 此方法使用 INSERT OR REPLACE 语义，确保幂等性
+     */
+    virtual bool savePosition(const Position& position) = 0;
+    
+    /**
+     * @brief 加载持仓信息
+     * 
+     * 从数据库加载指定账户在指定合约上的持仓。
+     * 
+     * @param accountId 账户ID
+     * @param instrumentId 合约代码
+     * @return 如果持仓存在返回 Position 对象，否则返回 std::nullopt
+     */
+    virtual std::optional<Position> loadPosition(
+        const std::string& accountId, const std::string& instrumentId) = 0;
+    
+    /**
+     * @brief 加载账户的所有持仓
+     * 
+     * 从数据库加载指定账户的所有持仓信息。
+     * 
+     * @param accountId 账户ID
+     * @return 持仓列表
+     */
+    virtual std::vector<Position> loadPositionsByAccount(const std::string& accountId) = 0;
+    
+    /**
+     * @brief 加载所有持仓
+     * 
+     * 从数据库加载所有持仓信息。
+     * 
+     * @return 持仓列表
+     */
+    virtual std::vector<Position> loadAllPositions() = 0;
+    
+    /**
+     * @brief 删除持仓
+     * 
+     * 从数据库删除指定持仓。
+     * 
+     * @param accountId 账户ID
+     * @param instrumentId 合约代码
+     * @return 删除成功返回 true，失败返回 false
+     */
+    virtual bool deletePosition(const std::string& accountId, const std::string& instrumentId) = 0;
+    
+    /**
+     * @brief 删除账户的所有持仓
+     * 
+     * 从数据库删除指定账户的所有持仓。
+     * 
+     * @param accountId 账户ID
+     * @return 删除成功返回 true，失败返回 false
+     */
+    virtual bool deletePositionsByAccount(const std::string& accountId) = 0;
 };
 
 } // namespace fix40
