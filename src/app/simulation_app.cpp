@@ -272,6 +272,11 @@ void SimulationApp::fromApp(const FixMessage& msg, const SessionID& sessionID) {
         // PositionQueryRequest - 持仓查询（自定义）
         handlePositionQuery(msg, sessionID, userId);
     }
+    else if (msgType == "U7") {
+        // InstrumentSearchRequest - 合约搜索（自定义）
+        // 注意：合约搜索不需要用户身份验证
+        handleInstrumentSearch(msg, sessionID);
+    }
     else {
         // 未知消息类型
         LOG() << "[SimulationApp] Unknown message type: " << msgType;
@@ -923,6 +928,60 @@ std::optional<SessionID> SimulationApp::findSessionByUserId(const std::string& u
     });
     
     return result;
+}
+
+// ============================================================================
+// 合约搜索实现
+// ============================================================================
+
+void SimulationApp::handleInstrumentSearch(const FixMessage& msg, const SessionID& sessionID) {
+    // 获取搜索参数
+    std::string pattern;
+    if (msg.has(tags::SearchPattern)) {
+        pattern = msg.get_string(tags::SearchPattern);
+    }
+    
+    size_t maxResults = 10;  // 默认返回 10 条
+    if (msg.has(tags::MaxResults)) {
+        maxResults = static_cast<size_t>(msg.get_int(tags::MaxResults));
+        if (maxResults > 50) maxResults = 50;  // 限制最大返回数量
+    }
+    
+    LOG() << "[SimulationApp] Processing instrument search: pattern=" << pattern
+          << " maxResults=" << maxResults;
+    
+    // 搜索合约
+    auto results = instrumentManager_.searchByPrefix(pattern, maxResults);
+    
+    // 构造 U8 响应消息 (InstrumentSearchResponse)
+    FixMessage response;
+    response.set(tags::MsgType, "U8");
+    
+    // 回填请求ID
+    if (msg.has(tags::RequestID)) {
+        response.set(tags::RequestID, msg.get_string(tags::RequestID));
+    }
+    
+    response.set(tags::SearchPattern, pattern);
+    response.set(tags::ResultCount, static_cast<int>(results.size()));
+    
+    // 将合约列表序列化为逗号分隔的字符串
+    if (!results.empty()) {
+        std::ostringstream oss;
+        for (size_t i = 0; i < results.size(); ++i) {
+            if (i > 0) oss << ",";
+            oss << results[i];
+        }
+        response.set(tags::InstrumentList, oss.str());
+    }
+    
+    // 发送响应
+    if (!sessionManager_.sendMessage(sessionID, response)) {
+        LOG() << "[SimulationApp] Failed to send instrument search response to "
+              << sessionID.to_string();
+    } else {
+        LOG() << "[SimulationApp] Sent instrument search response: " << results.size() << " results";
+    }
 }
 
 } // namespace fix40
