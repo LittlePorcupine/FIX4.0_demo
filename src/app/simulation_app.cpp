@@ -216,6 +216,13 @@ void SimulationApp::onLogon(const SessionID& sessionID) {
     // 身份绑定：使用 SenderCompID 作为用户ID
     std::string userId = extractAccountId(sessionID);
     
+    // 安全检查：拒绝无效的用户ID
+    if (userId.empty()) {
+        LOG() << "[SimulationApp] Rejecting logon: invalid user ID for session "
+              << sessionID.to_string();
+        return;
+    }
+    
     LOG() << "[SimulationApp] Session logged on: " << sessionID.to_string()
           << " -> User: " << userId;
     
@@ -464,11 +471,11 @@ std::string SimulationApp::extractAccountId(const SessionID& sessionID) const {
             return clientId;
         }
     }
-    // 回退：如果无法获取 clientCompID，使用 targetCompID
-    // （对于 Server 端 Session，targetCompID 是 "CLIENT"，不太有用）
-    LOG() << "[SimulationApp] Warning: Could not extract clientCompID for session "
-          << sessionID.to_string() << ", falling back to targetCompID";
-    return sessionID.targetCompID;
+    // 安全策略：无法获取有效的 clientCompID 时返回空字符串
+    // 调用方应检查返回值并拒绝处理
+    LOG() << "[SimulationApp] Error: Could not extract clientCompID for session "
+          << sessionID.to_string();
+    return "";
 }
 
 Account SimulationApp::getOrCreateAccount(const std::string& accountId, double initialBalance) {
@@ -623,9 +630,25 @@ void SimulationApp::handleNewOrderSingle(const FixMessage& msg, const SessionID&
 }
 
 void SimulationApp::handleOrderCancelRequest(const FixMessage& msg, const SessionID& sessionID, const std::string& userId) {
-    (void)userId;  // 撤单时通过 origClOrdID 查找原订单的账户
-    
     CancelRequest req = parseCancelRequest(msg, sessionID);
+    
+    // 安全检查：验证撤单请求是否属于当前用户
+    {
+        std::lock_guard<std::mutex> lock(mapMutex_);
+        auto it = orderAccountMap_.find(req.origClOrdID);
+        if (it == orderAccountMap_.end()) {
+            LOG() << "[SimulationApp] Cancel rejected: order " << req.origClOrdID << " not found";
+            sendBusinessReject(sessionID, "F", "Order not found: " + req.origClOrdID);
+            return;
+        }
+        if (it->second != userId) {
+            LOG() << "[SimulationApp] Cancel rejected: order " << req.origClOrdID 
+                  << " belongs to " << it->second << ", not " << userId;
+            sendBusinessReject(sessionID, "F", "Not authorized to cancel this order");
+            return;
+        }
+    }
+    
     engine_.submit(OrderEvent::cancelRequest(req));
 }
 
@@ -889,6 +912,10 @@ std::optional<SessionID> SimulationApp::findSessionByUserId(const std::string& u
     std::optional<SessionID> result;
     
     sessionManager_.forEachSession([&](const SessionID& sid, std::shared_ptr<Session> session) {
+        // 已找到则跳过后续遍历
+        if (result.has_value()) {
+            return;
+        }
         // 使用 Session::get_client_comp_id() 获取真实的客户端标识
         if (session && session->get_client_comp_id() == userId) {
             result = sid;
