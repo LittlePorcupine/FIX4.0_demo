@@ -95,12 +95,33 @@ if(ENABLE_CTP)
             BUILD_RPATH "${CTP_FRAMEWORK_DIR}/thostmduserapi_se.framework/Versions/A;${CTP_FRAMEWORK_DIR}/thosttraderapi_se.framework/Versions/A"
         )
     elseif(UNIX)
-        target_link_libraries(fix_engine PUBLIC
-            "${CTP_LIB_DIR}/thostmduserapi_se.so"
-            "${CTP_LIB_DIR}/thosttraderapi_se.so"
+        # Linux: 使用 IMPORTED 库方式链接，确保路径正确传递给链接器
+        set(CTP_MD_SO "${CMAKE_SOURCE_DIR}/third_party/ctp/linux/lib/thostmduserapi_se.so")
+        set(CTP_TRADER_SO "${CMAKE_SOURCE_DIR}/third_party/ctp/linux/lib/thosttraderapi_se.so")
+        
+        # 检查库文件是否存在
+        if(NOT EXISTS "${CTP_MD_SO}")
+            message(FATAL_ERROR "CTP MD library not found: ${CTP_MD_SO}")
+        endif()
+        if(NOT EXISTS "${CTP_TRADER_SO}")
+            message(FATAL_ERROR "CTP Trader library not found: ${CTP_TRADER_SO}")
+        endif()
+        
+        # 创建 IMPORTED 库目标
+        add_library(ctp_md SHARED IMPORTED)
+        set_target_properties(ctp_md PROPERTIES
+            IMPORTED_LOCATION "${CTP_MD_SO}"
         )
+        
+        add_library(ctp_trader SHARED IMPORTED)
+        set_target_properties(ctp_trader PROPERTIES
+            IMPORTED_LOCATION "${CTP_TRADER_SO}"
+        )
+        
+        target_link_libraries(fix_engine PUBLIC ctp_md ctp_trader)
         set_target_properties(fix_engine PROPERTIES
-            BUILD_RPATH "${CTP_LIB_DIR}"
+            BUILD_RPATH "${CMAKE_SOURCE_DIR}/third_party/ctp/linux/lib"
+            INSTALL_RPATH "${CMAKE_SOURCE_DIR}/third_party/ctp/linux/lib"
         )
     endif()
 endif()
