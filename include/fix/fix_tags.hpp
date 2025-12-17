@@ -170,5 +170,88 @@ constexpr int PossDupFlag = 43;
 /// 重传消息时使用，记录原始发送时间
 constexpr int OrigSendingTime = 122;
 
+// ============================================================================
+// 账户相关标签 (Account)
+// ============================================================================
+
+/// @brief 账户标识 (Account)
+constexpr int Account = 1;
+
+// ============================================================================
+// 自定义标签 (User Defined Tags, 10000+)
+// ============================================================================
+// 用于扩展 FIX 协议，支持资金查询等自定义功能
+
+/// @brief 请求ID，用于将响应匹配到请求
+constexpr int RequestID = 10001;
+
+/// @brief 账户余额 (静态权益)
+constexpr int Balance = 10002;
+
+/// @brief 可用资金
+constexpr int Available = 10003;
+
+/// @brief 冻结保证金
+constexpr int FrozenMargin = 10004;
+
+/// @brief 占用保证金
+constexpr int UsedMargin = 10005;
+
+/// @brief 持仓盈亏 (浮动盈亏)
+constexpr int PositionProfit = 10006;
+
+/// @brief 平仓盈亏 (已实现盈亏)
+constexpr int CloseProfit = 10007;
+
+/// @brief 动态权益
+constexpr int DynamicEquity = 10008;
+
+/// @brief 风险度
+constexpr int RiskRatio = 10009;
+
+// ============================================================================
+// 持仓查询相关自定义标签
+// ============================================================================
+
+/// @brief 合约ID
+constexpr int InstrumentID = 10010;
+
+/// @brief 多头持仓
+constexpr int LongPosition = 10011;
+
+/// @brief 空头持仓
+constexpr int ShortPosition = 10012;
+
+/// @brief 多头均价
+constexpr int LongAvgPrice = 10013;
+
+/// @brief 空头均价
+constexpr int ShortAvgPrice = 10014;
+
+/// @brief 持仓数量 (用于持仓列表中的单条记录)
+constexpr int PositionQty = 10015;
+
+/// @brief 持仓方向 (1=多头, 2=空头)
+constexpr int PositionSide = 10016;
+
+/// @brief 持仓均价
+constexpr int PositionAvgPrice = 10017;
+
+/// @brief 持仓保证金
+constexpr int PositionMargin = 10018;
+
+/// @brief 记录数量 (用于列表响应)
+constexpr int NoPositions = 10019;
+
+// ============================================================================
+// 推送消息相关自定义标签
+// ============================================================================
+
+/// @brief 更新类型 (1=账户更新, 2=持仓更新, 3=成交通知)
+constexpr int UpdateType = 10020;
+
+/// @brief 更新原因 (1=行情变化, 2=成交, 3=出入金)
+constexpr int UpdateReason = 10021;
+
 } // namespace tags
 } // namespace fix40

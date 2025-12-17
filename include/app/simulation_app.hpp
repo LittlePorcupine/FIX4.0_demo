@@ -1,16 +1,28 @@
 /**
  * @file simulation_app.hpp
- * @brief 模拟交易应用层实现
+ * @brief 模拟交易网关 (Trade Gateway)
  *
- * 提供一个线程安全的 Application 实现，演示最佳实践：
- * - fromApp() 只做轻量的入队操作
- * - 业务逻辑由独立的撮合引擎线程处理
+ * 提供一个线程安全的 Application 实现，作为交易网关：
+ * - 身份绑定：利用 FIX Logon 消息中的 SenderCompID 作为用户标识
+ * - 安全路由：强制使用 Session 绑定的 UserID 进行验资和下单
+ * - 协议扩展：支持 FIX User Defined Message (U系列) 实现自定义查询
  * 
  * 集成以下模块：
  * - AccountManager: 账户管理
  * - PositionManager: 持仓管理
  * - InstrumentManager: 合约信息管理
  * - RiskManager: 风险控制
+ * 
+ * @par 支持的消息类型
+ * - D:  NewOrderSingle (新订单)
+ * - F:  OrderCancelRequest (撤单请求)
+ * - U1: BalanceQueryRequest (资金查询请求) - 自定义
+ * - U3: PositionQueryRequest (持仓查询请求) - 自定义
+ * 
+ * @par 发送的消息类型
+ * - 8:  ExecutionReport (执行报告)
+ * - U2: BalanceQueryResponse (资金查询响应) - 自定义
+ * - U4: PositionQueryResponse (持仓查询响应) - 自定义
  */
 
 #pragma once
@@ -290,10 +302,111 @@ private:
     /**
      * @brief 从SessionID提取账户ID
      * 
+     * 使用 SenderCompID 作为账户ID，实现身份绑定。
+     * 
      * @param sessionID 会话ID
      * @return 账户ID（使用SenderCompID）
      */
     std::string extractAccountId(const SessionID& sessionID) const;
+
+    // =========================================================================
+    // 消息处理函数 (Message Handlers)
+    // =========================================================================
+
+    /**
+     * @brief 处理新订单 (MsgType = D)
+     * 
+     * @param msg FIX 消息
+     * @param sessionID 会话标识
+     * @param userId 绑定的用户ID（从 Session 提取，非消息体）
+     */
+    void handleNewOrderSingle(const FixMessage& msg, const SessionID& sessionID, const std::string& userId);
+
+    /**
+     * @brief 处理撤单请求 (MsgType = F)
+     * 
+     * @param msg FIX 消息
+     * @param sessionID 会话标识
+     * @param userId 绑定的用户ID
+     */
+    void handleOrderCancelRequest(const FixMessage& msg, const SessionID& sessionID, const std::string& userId);
+
+    /**
+     * @brief 处理资金查询请求 (MsgType = U1)
+     * 
+     * 查询用户账户的资金信息，返回 U2 响应。
+     * 
+     * @param msg FIX 消息
+     * @param sessionID 会话标识
+     * @param userId 绑定的用户ID
+     */
+    void handleBalanceQuery(const FixMessage& msg, const SessionID& sessionID, const std::string& userId);
+
+    /**
+     * @brief 处理持仓查询请求 (MsgType = U3)
+     * 
+     * 查询用户的持仓信息，返回 U4 响应。
+     * 
+     * @param msg FIX 消息
+     * @param sessionID 会话标识
+     * @param userId 绑定的用户ID
+     */
+    void handlePositionQuery(const FixMessage& msg, const SessionID& sessionID, const std::string& userId);
+
+    /**
+     * @brief 发送拒绝消息
+     * 
+     * 当收到无法处理的消息时，发送 BusinessMessageReject。
+     * 
+     * @param sessionID 会话标识
+     * @param refMsgType 被拒绝的消息类型
+     * @param reason 拒绝原因
+     */
+    void sendBusinessReject(const SessionID& sessionID, const std::string& refMsgType, const std::string& reason);
+
+    // =========================================================================
+    // 行情驱动账户更新 (Market-Driven Account Update)
+    // =========================================================================
+
+    /**
+     * @brief 处理行情更新，重算所有相关账户的价值
+     * 
+     * 当行情变化时调用，更新持仓浮动盈亏和账户价值。
+     * 可选择性地推送更新给相关 Client。
+     * 
+     * @param instrumentId 合约代码
+     * @param lastPrice 最新价
+     */
+    void onMarketDataUpdate(const std::string& instrumentId, double lastPrice);
+
+    /**
+     * @brief 向指定用户推送账户更新 (MsgType = U5)
+     * 
+     * 当账户价值发生变化时，主动推送给 Client。
+     * 
+     * @param userId 用户ID
+     * @param reason 更新原因 (1=行情变化, 2=成交, 3=出入金)
+     */
+    void pushAccountUpdate(const std::string& userId, int reason = 1);
+
+    /**
+     * @brief 向指定用户推送持仓更新 (MsgType = U6)
+     * 
+     * 当持仓发生变化时，主动推送给 Client。
+     * 
+     * @param userId 用户ID
+     * @param instrumentId 合约代码
+     * @param reason 更新原因
+     */
+    void pushPositionUpdate(const std::string& userId, const std::string& instrumentId, int reason = 1);
+
+    /**
+     * @brief 根据用户ID查找对应的 SessionID
+     * 
+     * @param userId 用户ID
+     * @return std::optional<SessionID> 找到返回 SessionID，否则返回 nullopt
+     */
+    std::optional<SessionID> findSessionByUserId(const std::string& userId) const;
 
     // =========================================================================
     // 成员变量

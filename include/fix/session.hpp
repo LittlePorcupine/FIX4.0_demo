@@ -403,6 +403,25 @@ public:
      */
     void set_processing_resend(bool processing) { processingResend_ = processing; }
 
+    // --- 客户端身份标识 ---
+
+    /**
+     * @brief 获取客户端标识
+     * @return 客户端的 CompID（从 Logon 消息中提取）
+     * 
+     * 对于 Server 端 Session，返回连接客户端的真实标识。
+     * 对于 Client 端 Session，返回自身的 senderCompID。
+     */
+    const std::string& get_client_comp_id() const { return clientCompID_; }
+
+    /**
+     * @brief 设置客户端标识
+     * @param clientId 客户端的 CompID
+     * 
+     * 由 DisconnectedState::onMessageReceived 在收到 Logon 消息时调用。
+     */
+    void set_client_comp_id(const std::string& clientId) { clientCompID_ = clientId; }
+
 private:
     std::atomic<bool> shutting_down_{false};   ///< 关闭中标志
     std::recursive_mutex state_mutex_;          ///< 状态保护锁
@@ -435,6 +454,7 @@ private:
     Application* application_ = nullptr;  ///< 应用层处理器指针
     IStore* store_ = nullptr;             ///< 存储接口指针（用于消息持久化）
     bool processingResend_ = false;       ///< 是否正在处理重传请求
+    std::string clientCompID_;            ///< 客户端标识（从 Logon 消息提取）
 };
 
 } // namespace fix40

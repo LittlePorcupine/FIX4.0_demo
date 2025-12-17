@@ -16,6 +16,10 @@
 #include "base/logger.hpp"
 #include "storage/store.hpp"
 #include <cstdlib>
+#include <sstream>
+#include <iomanip>
+#include <set>
+#include <optional>
 
 namespace fix40 {
 
@@ -188,6 +192,12 @@ void SimulationApp::initializeManagers() {
         [this](const SessionID& sid, const ExecutionReport& rpt) {
             onExecutionReport(sid, rpt);
         });
+    
+    // 设置行情更新回调（用于账户价值重算和推送）
+    engine_.setMarketDataUpdateCallback(
+        [this](const std::string& instrumentId, double lastPrice) {
+            onMarketDataUpdate(instrumentId, lastPrice);
+        });
 }
 
 SimulationApp::~SimulationApp() {
@@ -203,7 +213,25 @@ void SimulationApp::stop() {
 }
 
 void SimulationApp::onLogon(const SessionID& sessionID) {
-    LOG() << "[SimulationApp] Session logged on: " << sessionID.to_string();
+    // 身份绑定：使用 SenderCompID 作为用户ID
+    std::string userId = extractAccountId(sessionID);
+    
+    // 安全检查：拒绝无效的用户ID
+    if (userId.empty()) {
+        LOG() << "[SimulationApp] Rejecting logon: invalid user ID for session "
+              << sessionID.to_string();
+        return;
+    }
+    
+    LOG() << "[SimulationApp] Session logged on: " << sessionID.to_string()
+          << " -> User: " << userId;
+    
+    // 自动开户：如果该用户不存在，初始化一个带初始资金的账户
+    if (!accountManager_.hasAccount(userId)) {
+        LOG() << "[SimulationApp] Initializing new account for user: " << userId;
+        accountManager_.createAccount(userId, 1000000.0);  // 默认 100 万
+    }
+    
     engine_.submit(OrderEvent{OrderEventType::SESSION_LOGON, sessionID});
 }
 
@@ -215,155 +243,39 @@ void SimulationApp::onLogout(const SessionID& sessionID) {
 void SimulationApp::fromApp(const FixMessage& msg, const SessionID& sessionID) {
     const std::string msgType = msg.get_string(tags::MsgType);
     
-    LOG() << "[SimulationApp] Received business message: MsgType=" << msgType 
-          << " from " << sessionID.to_string();
+    // =========================================================================
+    // 1. 身份验证：从 Session 提取用户ID（安全路由的核心）
+    // =========================================================================
+    // 关键：不从消息体读取 Account 字段，而是使用 Session 绑定的身份
+    std::string userId = extractAccountId(sessionID);
     
-    // 解析 FIX 消息，转换为内部结构，提交到队列
+    LOG() << "[SimulationApp] Received MsgType=" << msgType 
+          << " from " << sessionID.to_string()
+          << " (User: " << userId << ")";
+    
+    // =========================================================================
+    // 2. 消息路由分发
+    // =========================================================================
     if (msgType == "D") {
-        // NewOrderSingle
-        ParseResult result = parseNewOrderSingle(msg, sessionID);
-        if (!result.success) {
-            LOG() << "[SimulationApp] Parse failed: " << result.error;
-            // 发送拒绝报告
-            ExecutionReport reject;
-            reject.clOrdID = msg.has(tags::ClOrdID) ? msg.get_string(tags::ClOrdID) : "";
-            reject.symbol = msg.has(tags::Symbol) ? msg.get_string(tags::Symbol) : "";
-            reject.ordStatus = OrderStatus::REJECTED;
-            reject.execTransType = ExecTransType::NEW;
-            reject.ordRejReason = 99;  // 其他原因
-            reject.text = result.error;
-            reject.transactTime = std::chrono::system_clock::now();
-            onExecutionReport(sessionID, reject);
-            return;
-        }
-        
-        Order& order = result.order;
-        std::string accountId = extractAccountId(sessionID);
-        
-        // 确保账户存在
-        getOrCreateAccount(accountId);
-        
-        // 获取合约信息
-        const Instrument* instrument = instrumentManager_.getInstrument(order.symbol);
-        if (!instrument) {
-            LOG() << "[SimulationApp] Instrument not found: " << order.symbol;
-            ExecutionReport reject;
-            reject.clOrdID = order.clOrdID;
-            reject.symbol = order.symbol;
-            reject.side = order.side;
-            reject.ordType = order.ordType;
-            reject.orderQty = order.orderQty;
-            reject.price = order.price;
-            reject.ordStatus = OrderStatus::REJECTED;
-            reject.execTransType = ExecTransType::NEW;
-            reject.ordRejReason = static_cast<int>(RejectReason::INSTRUMENT_NOT_FOUND);
-            reject.text = "Instrument not found: " + order.symbol;
-            reject.transactTime = std::chrono::system_clock::now();
-            onExecutionReport(sessionID, reject);
-            return;
-        }
-        
-        // 获取账户和持仓信息
-        auto accountOpt = accountManager_.getAccount(accountId);
-        if (!accountOpt) {
-            LOG() << "[SimulationApp] Account not found: " << accountId;
-            return;
-        }
-        
-        Position position;
-        auto posOpt = positionManager_.getPosition(accountId, order.symbol);
-        if (posOpt) {
-            position = *posOpt;
-        } else {
-            position.accountId = accountId;
-            position.instrumentId = order.symbol;
-        }
-        
-        // 获取行情快照
-        MarketDataSnapshot snapshot;
-        const MarketDataSnapshot* snapshotPtr = engine_.getMarketSnapshot(order.symbol);
-        if (snapshotPtr) {
-            snapshot = *snapshotPtr;
-        } else {
-            snapshot.instrumentId = order.symbol;
-            // 使用涨跌停价作为默认值
-            snapshot.upperLimitPrice = instrument->upperLimitPrice;
-            snapshot.lowerLimitPrice = instrument->lowerLimitPrice;
-        }
-        
-        // 判断开平标志（简化处理：买单开多/平空，卖单开空/平多）
-        OffsetFlag offsetFlag = OffsetFlag::OPEN;
-        if (order.side == OrderSide::BUY && position.shortPosition > 0) {
-            offsetFlag = OffsetFlag::CLOSE;  // 买单平空
-        } else if (order.side == OrderSide::SELL && position.longPosition > 0) {
-            offsetFlag = OffsetFlag::CLOSE;  // 卖单平多
-        }
-        
-        // 风控检查
-        CheckResult checkResult = riskManager_.checkOrder(
-            order, *accountOpt, position, *instrument, snapshot, offsetFlag);
-        
-        if (!checkResult.passed) {
-            LOG() << "[SimulationApp] Risk check failed: " << checkResult.rejectText;
-            ExecutionReport reject;
-            reject.clOrdID = order.clOrdID;
-            reject.symbol = order.symbol;
-            reject.side = order.side;
-            reject.ordType = order.ordType;
-            reject.orderQty = order.orderQty;
-            reject.price = order.price;
-            reject.ordStatus = OrderStatus::REJECTED;
-            reject.execTransType = ExecTransType::NEW;
-            reject.ordRejReason = static_cast<int>(checkResult.rejectReason);
-            reject.text = checkResult.rejectText;
-            reject.transactTime = std::chrono::system_clock::now();
-            onExecutionReport(sessionID, reject);
-            return;
-        }
-        
-        // 开仓订单：冻结保证金
-        if (offsetFlag == OffsetFlag::OPEN) {
-            double requiredMargin = riskManager_.calculateRequiredMargin(order, *instrument);
-            if (!accountManager_.freezeMargin(accountId, requiredMargin)) {
-                LOG() << "[SimulationApp] Failed to freeze margin: " << requiredMargin;
-                ExecutionReport reject;
-                reject.clOrdID = order.clOrdID;
-                reject.symbol = order.symbol;
-                reject.side = order.side;
-                reject.ordType = order.ordType;
-                reject.orderQty = order.orderQty;
-                reject.price = order.price;
-                reject.ordStatus = OrderStatus::REJECTED;
-                reject.execTransType = ExecTransType::NEW;
-                reject.ordRejReason = static_cast<int>(RejectReason::INSUFFICIENT_FUNDS);
-                reject.text = "Failed to freeze margin";
-                reject.transactTime = std::chrono::system_clock::now();
-                onExecutionReport(sessionID, reject);
-                return;
-            }
-            
-            // 记录订单的冻结保证金信息（包含原始总量，用于正确处理部分成交）
-            {
-                std::lock_guard<std::mutex> lock(mapMutex_);
-                orderMarginInfoMap_[order.clOrdID] = OrderMarginInfo(requiredMargin, order.orderQty);
-            }
-        }
-        
-        // 记录订单到账户的映射
-        {
-            std::lock_guard<std::mutex> lock(mapMutex_);
-            orderAccountMap_[order.clOrdID] = accountId;
-        }
-        
-        // 提交到撮合引擎
-        engine_.submit(OrderEvent::newOrder(order));
-        
-    } else if (msgType == "F") {
-        // OrderCancelRequest
-        CancelRequest req = parseCancelRequest(msg, sessionID);
-        engine_.submit(OrderEvent::cancelRequest(req));
-    } else {
-        LOG() << "[SimulationApp] Unhandled message type: " << msgType;
+        // NewOrderSingle - 新订单
+        handleNewOrderSingle(msg, sessionID, userId);
+    } 
+    else if (msgType == "F") {
+        // OrderCancelRequest - 撤单请求
+        handleOrderCancelRequest(msg, sessionID, userId);
+    }
+    else if (msgType == "U1") {
+        // BalanceQueryRequest - 资金查询（自定义）
+        handleBalanceQuery(msg, sessionID, userId);
+    }
+    else if (msgType == "U3") {
+        // PositionQueryRequest - 持仓查询（自定义）
+        handlePositionQuery(msg, sessionID, userId);
+    }
+    else {
+        // 未知消息类型
+        LOG() << "[SimulationApp] Unknown message type: " << msgType;
+        sendBusinessReject(sessionID, msgType, "Unsupported message type");
     }
 }
 
@@ -551,8 +463,19 @@ void SimulationApp::handleCancel(const std::string& accountId, const ExecutionRe
 }
 
 std::string SimulationApp::extractAccountId(const SessionID& sessionID) const {
-    // 使用SenderCompID作为账户ID
-    return sessionID.senderCompID;
+    // 通过 SessionManager 获取 Session 对象，提取真实的客户端标识
+    auto session = sessionManager_.findSession(sessionID);
+    if (session) {
+        const std::string& clientId = session->get_client_comp_id();
+        if (!clientId.empty()) {
+            return clientId;
+        }
+    }
+    // 安全策略：无法获取有效的 clientCompID 时返回空字符串
+    // 调用方应检查返回值并拒绝处理
+    LOG() << "[SimulationApp] Error: Could not extract clientCompID for session "
+          << sessionID.to_string();
+    return "";
 }
 
 Account SimulationApp::getOrCreateAccount(const std::string& accountId, double initialBalance) {
@@ -561,6 +484,445 @@ Account SimulationApp::getOrCreateAccount(const std::string& accountId, double i
         return *accountOpt;
     }
     return accountManager_.createAccount(accountId, initialBalance);
+}
+
+// ============================================================================
+// 消息处理函数实现
+// ============================================================================
+
+void SimulationApp::handleNewOrderSingle(const FixMessage& msg, const SessionID& sessionID, const std::string& userId) {
+    // 解析订单
+    ParseResult result = parseNewOrderSingle(msg, sessionID);
+    if (!result.success) {
+        LOG() << "[SimulationApp] Parse failed: " << result.error;
+        ExecutionReport reject;
+        reject.clOrdID = msg.has(tags::ClOrdID) ? msg.get_string(tags::ClOrdID) : "";
+        reject.symbol = msg.has(tags::Symbol) ? msg.get_string(tags::Symbol) : "";
+        reject.ordStatus = OrderStatus::REJECTED;
+        reject.execTransType = ExecTransType::NEW;
+        reject.ordRejReason = 99;
+        reject.text = result.error;
+        reject.transactTime = std::chrono::system_clock::now();
+        onExecutionReport(sessionID, reject);
+        return;
+    }
+    
+    Order& order = result.order;
+    
+    // 关键：使用从 Session 提取的 userId，而非消息体中的 Account 字段
+    // 这是安全路由的核心 - 防止用户伪造账户ID
+    
+    // 确保账户存在
+    getOrCreateAccount(userId);
+    
+    // 获取合约信息
+    const Instrument* instrument = instrumentManager_.getInstrument(order.symbol);
+    if (!instrument) {
+        LOG() << "[SimulationApp] Instrument not found: " << order.symbol;
+        ExecutionReport reject;
+        reject.clOrdID = order.clOrdID;
+        reject.symbol = order.symbol;
+        reject.side = order.side;
+        reject.ordType = order.ordType;
+        reject.orderQty = order.orderQty;
+        reject.price = order.price;
+        reject.ordStatus = OrderStatus::REJECTED;
+        reject.execTransType = ExecTransType::NEW;
+        reject.ordRejReason = static_cast<int>(RejectReason::INSTRUMENT_NOT_FOUND);
+        reject.text = "Instrument not found: " + order.symbol;
+        reject.transactTime = std::chrono::system_clock::now();
+        onExecutionReport(sessionID, reject);
+        return;
+    }
+    
+    // 获取账户和持仓信息
+    auto accountOpt = accountManager_.getAccount(userId);
+    if (!accountOpt) {
+        LOG() << "[SimulationApp] Account not found: " << userId;
+        return;
+    }
+    
+    Position position;
+    auto posOpt = positionManager_.getPosition(userId, order.symbol);
+    if (posOpt) {
+        position = *posOpt;
+    } else {
+        position.accountId = userId;
+        position.instrumentId = order.symbol;
+    }
+    
+    // 获取行情快照
+    MarketDataSnapshot snapshot;
+    const MarketDataSnapshot* snapshotPtr = engine_.getMarketSnapshot(order.symbol);
+    if (snapshotPtr) {
+        snapshot = *snapshotPtr;
+    } else {
+        snapshot.instrumentId = order.symbol;
+        snapshot.upperLimitPrice = instrument->upperLimitPrice;
+        snapshot.lowerLimitPrice = instrument->lowerLimitPrice;
+    }
+    
+    // 判断开平标志
+    OffsetFlag offsetFlag = OffsetFlag::OPEN;
+    if (order.side == OrderSide::BUY && position.shortPosition > 0) {
+        offsetFlag = OffsetFlag::CLOSE;
+    } else if (order.side == OrderSide::SELL && position.longPosition > 0) {
+        offsetFlag = OffsetFlag::CLOSE;
+    }
+    
+    // 风控检查
+    CheckResult checkResult = riskManager_.checkOrder(
+        order, *accountOpt, position, *instrument, snapshot, offsetFlag);
+    
+    if (!checkResult.passed) {
+        LOG() << "[SimulationApp] Risk check failed: " << checkResult.rejectText;
+        ExecutionReport reject;
+        reject.clOrdID = order.clOrdID;
+        reject.symbol = order.symbol;
+        reject.side = order.side;
+        reject.ordType = order.ordType;
+        reject.orderQty = order.orderQty;
+        reject.price = order.price;
+        reject.ordStatus = OrderStatus::REJECTED;
+        reject.execTransType = ExecTransType::NEW;
+        reject.ordRejReason = static_cast<int>(checkResult.rejectReason);
+        reject.text = checkResult.rejectText;
+        reject.transactTime = std::chrono::system_clock::now();
+        onExecutionReport(sessionID, reject);
+        return;
+    }
+    
+    // 开仓订单：冻结保证金
+    if (offsetFlag == OffsetFlag::OPEN) {
+        double requiredMargin = riskManager_.calculateRequiredMargin(order, *instrument);
+        if (!accountManager_.freezeMargin(userId, requiredMargin)) {
+            LOG() << "[SimulationApp] Failed to freeze margin: " << requiredMargin;
+            ExecutionReport reject;
+            reject.clOrdID = order.clOrdID;
+            reject.symbol = order.symbol;
+            reject.side = order.side;
+            reject.ordType = order.ordType;
+            reject.orderQty = order.orderQty;
+            reject.price = order.price;
+            reject.ordStatus = OrderStatus::REJECTED;
+            reject.execTransType = ExecTransType::NEW;
+            reject.ordRejReason = static_cast<int>(RejectReason::INSUFFICIENT_FUNDS);
+            reject.text = "Failed to freeze margin";
+            reject.transactTime = std::chrono::system_clock::now();
+            onExecutionReport(sessionID, reject);
+            return;
+        }
+        
+        {
+            std::lock_guard<std::mutex> lock(mapMutex_);
+            orderMarginInfoMap_[order.clOrdID] = OrderMarginInfo(requiredMargin, order.orderQty);
+        }
+    }
+    
+    // 记录订单到账户的映射
+    {
+        std::lock_guard<std::mutex> lock(mapMutex_);
+        orderAccountMap_[order.clOrdID] = userId;
+    }
+    
+    // 提交到撮合引擎
+    engine_.submit(OrderEvent::newOrder(order));
+}
+
+void SimulationApp::handleOrderCancelRequest(const FixMessage& msg, const SessionID& sessionID, const std::string& userId) {
+    CancelRequest req = parseCancelRequest(msg, sessionID);
+    
+    // 安全检查：验证撤单请求是否属于当前用户
+    {
+        std::lock_guard<std::mutex> lock(mapMutex_);
+        auto it = orderAccountMap_.find(req.origClOrdID);
+        if (it == orderAccountMap_.end()) {
+            LOG() << "[SimulationApp] Cancel rejected: order " << req.origClOrdID << " not found";
+            sendBusinessReject(sessionID, "F", "Order not found: " + req.origClOrdID);
+            return;
+        }
+        if (it->second != userId) {
+            LOG() << "[SimulationApp] Cancel rejected: order " << req.origClOrdID 
+                  << " belongs to " << it->second << ", not " << userId;
+            sendBusinessReject(sessionID, "F", "Not authorized to cancel this order");
+            return;
+        }
+    }
+    
+    engine_.submit(OrderEvent::cancelRequest(req));
+}
+
+void SimulationApp::handleBalanceQuery(const FixMessage& msg, const SessionID& sessionID, const std::string& userId) {
+    LOG() << "[SimulationApp] Processing balance query for user: " << userId;
+    
+    // 查询账户数据
+    auto accountOpt = accountManager_.getAccount(userId);
+    if (!accountOpt) {
+        LOG() << "[SimulationApp] Account not found for balance query: " << userId;
+        sendBusinessReject(sessionID, "U1", "Account not found");
+        return;
+    }
+    
+    const Account& account = *accountOpt;
+    
+    // 构造 U2 响应消息 (BalanceQueryResponse)
+    FixMessage response;
+    response.set(tags::MsgType, "U2");
+    
+    // 回填请求ID（如果客户端发了的话）
+    if (msg.has(tags::RequestID)) {
+        response.set(tags::RequestID, msg.get_string(tags::RequestID));
+    }
+    
+    // 账户标识
+    response.set(tags::Account, userId);
+    
+    // 资金信息（使用自定义 Tag）
+    // 注意：FixMessage::set 只支持 string 和 int，需要将 double 转为 string
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2);
+    
+    oss.str(""); oss << account.balance;
+    response.set(tags::Balance, oss.str());
+    
+    oss.str(""); oss << account.available;
+    response.set(tags::Available, oss.str());
+    
+    oss.str(""); oss << account.frozenMargin;
+    response.set(tags::FrozenMargin, oss.str());
+    
+    oss.str(""); oss << account.usedMargin;
+    response.set(tags::UsedMargin, oss.str());
+    
+    oss.str(""); oss << account.positionProfit;
+    response.set(tags::PositionProfit, oss.str());
+    
+    oss.str(""); oss << account.closeProfit;
+    response.set(tags::CloseProfit, oss.str());
+    
+    oss.str(""); oss << account.getDynamicEquity();
+    response.set(tags::DynamicEquity, oss.str());
+    
+    oss.str(""); oss << account.getRiskRatio();
+    response.set(tags::RiskRatio, oss.str());
+    
+    // 发送响应
+    if (!sessionManager_.sendMessage(sessionID, response)) {
+        LOG() << "[SimulationApp] Failed to send balance response to " << sessionID.to_string();
+    } else {
+        LOG() << "[SimulationApp] Sent balance response to " << userId
+              << " Balance=" << account.balance
+              << " Available=" << account.available;
+    }
+}
+
+void SimulationApp::handlePositionQuery(const FixMessage& msg, const SessionID& sessionID, const std::string& userId) {
+    LOG() << "[SimulationApp] Processing position query for user: " << userId;
+    
+    // 获取用户的所有持仓
+    auto positions = positionManager_.getPositionsByAccount(userId);
+    
+    // 构造 U4 响应消息 (PositionQueryResponse)
+    FixMessage response;
+    response.set(tags::MsgType, "U4");
+    
+    // 回填请求ID
+    if (msg.has(tags::RequestID)) {
+        response.set(tags::RequestID, msg.get_string(tags::RequestID));
+    }
+    
+    response.set(tags::Account, userId);
+    response.set(tags::NoPositions, static_cast<int>(positions.size()));
+    
+    // 注意：FIX 协议的 Repeating Group 处理比较复杂
+    // 这里简化处理：将持仓信息序列化为文本格式放在 Text 字段
+    // 实际生产环境应该使用标准的 Repeating Group 格式
+    if (!positions.empty()) {
+        std::ostringstream posText;
+        posText << std::fixed << std::setprecision(2);
+        for (const auto& pos : positions) {
+            posText << pos.instrumentId << ":"
+                    << "L" << pos.longPosition << "@" << pos.longAvgPrice << ","
+                    << "S" << pos.shortPosition << "@" << pos.shortAvgPrice << ";";
+        }
+        response.set(tags::Text, posText.str());
+    }
+    
+    // 发送响应
+    if (!sessionManager_.sendMessage(sessionID, response)) {
+        LOG() << "[SimulationApp] Failed to send position response to " << sessionID.to_string();
+    } else {
+        LOG() << "[SimulationApp] Sent position response to " << userId
+              << " with " << positions.size() << " positions";
+    }
+}
+
+void SimulationApp::sendBusinessReject(const SessionID& sessionID, const std::string& refMsgType, const std::string& reason) {
+    // 构造 BusinessMessageReject (MsgType = j)
+    FixMessage reject;
+    reject.set(tags::MsgType, "j");
+    reject.set(tags::Text, reason);
+    // RefMsgType 标准 Tag 是 372，这里简化处理放在 Text 中
+    
+    LOG() << "[SimulationApp] Sending BusinessReject for MsgType=" << refMsgType
+          << " reason: " << reason;
+    
+    if (!sessionManager_.sendMessage(sessionID, reject)) {
+        LOG() << "[SimulationApp] Failed to send BusinessReject to " << sessionID.to_string();
+    }
+}
+
+// ============================================================================
+// 行情驱动账户更新实现
+// ============================================================================
+
+void SimulationApp::onMarketDataUpdate(const std::string& instrumentId, double lastPrice) {
+    // 获取合约信息
+    const Instrument* instrument = instrumentManager_.getInstrument(instrumentId);
+    if (!instrument) {
+        return;
+    }
+    
+    // 获取该合约的所有持仓
+    auto allPositions = positionManager_.getAllPositions();
+    
+    // 收集受影响的账户
+    std::set<std::string> affectedAccounts;
+    
+    for (const auto& pos : allPositions) {
+        if (pos.instrumentId == instrumentId && pos.hasPosition()) {
+            // 更新持仓浮动盈亏
+            double newProfit = positionManager_.updateProfit(
+                pos.accountId, instrumentId, lastPrice, instrument->volumeMultiple);
+            
+            affectedAccounts.insert(pos.accountId);
+            
+            LOG() << "[SimulationApp] Updated position profit for " << pos.accountId
+                  << " " << instrumentId << " profit=" << newProfit;
+        }
+    }
+    
+    // 更新受影响账户的持仓盈亏总额，并推送给 Client
+    for (const auto& accountId : affectedAccounts) {
+        double totalProfit = positionManager_.getTotalProfit(accountId);
+        accountManager_.updatePositionProfit(accountId, totalProfit);
+        
+        // 推送账户更新给 Client（行情变化触发）
+        pushAccountUpdate(accountId, 1);  // 1 = 行情变化
+    }
+}
+
+void SimulationApp::pushAccountUpdate(const std::string& userId, int reason) {
+    // 查找用户对应的 Session
+    auto sessionOpt = findSessionByUserId(userId);
+    if (!sessionOpt) {
+        LOG() << "[SimulationApp] Cannot push account update: session not found for " << userId;
+        return;
+    }
+    
+    // 获取账户数据
+    auto accountOpt = accountManager_.getAccount(userId);
+    if (!accountOpt) {
+        return;
+    }
+    
+    const Account& account = *accountOpt;
+    
+    // 构造 U5 推送消息 (AccountUpdateNotification)
+    FixMessage msg;
+    msg.set(tags::MsgType, "U5");
+    msg.set(tags::Account, userId);
+    msg.set(tags::UpdateType, 1);  // 1 = 账户更新
+    msg.set(tags::UpdateReason, reason);
+    
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2);
+    
+    oss.str(""); oss << account.balance;
+    msg.set(tags::Balance, oss.str());
+    
+    oss.str(""); oss << account.available;
+    msg.set(tags::Available, oss.str());
+    
+    oss.str(""); oss << account.frozenMargin;
+    msg.set(tags::FrozenMargin, oss.str());
+    
+    oss.str(""); oss << account.usedMargin;
+    msg.set(tags::UsedMargin, oss.str());
+    
+    oss.str(""); oss << account.positionProfit;
+    msg.set(tags::PositionProfit, oss.str());
+    
+    oss.str(""); oss << account.getDynamicEquity();
+    msg.set(tags::DynamicEquity, oss.str());
+    
+    // 发送推送
+    if (!sessionManager_.sendMessage(*sessionOpt, msg)) {
+        LOG() << "[SimulationApp] Failed to push account update to " << userId;
+    }
+}
+
+void SimulationApp::pushPositionUpdate(const std::string& userId, const std::string& instrumentId, int reason) {
+    // 查找用户对应的 Session
+    auto sessionOpt = findSessionByUserId(userId);
+    if (!sessionOpt) {
+        return;
+    }
+    
+    // 获取持仓数据
+    auto posOpt = positionManager_.getPosition(userId, instrumentId);
+    if (!posOpt) {
+        return;
+    }
+    
+    const Position& pos = *posOpt;
+    
+    // 构造 U6 推送消息 (PositionUpdateNotification)
+    FixMessage msg;
+    msg.set(tags::MsgType, "U6");
+    msg.set(tags::Account, userId);
+    msg.set(tags::UpdateType, 2);  // 2 = 持仓更新
+    msg.set(tags::UpdateReason, reason);
+    msg.set(tags::InstrumentID, instrumentId);
+    
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2);
+    
+    msg.set(tags::LongPosition, static_cast<int>(pos.longPosition));
+    
+    oss.str(""); oss << pos.longAvgPrice;
+    msg.set(tags::LongAvgPrice, oss.str());
+    
+    msg.set(tags::ShortPosition, static_cast<int>(pos.shortPosition));
+    
+    oss.str(""); oss << pos.shortAvgPrice;
+    msg.set(tags::ShortAvgPrice, oss.str());
+    
+    oss.str(""); oss << pos.getTotalProfit();
+    msg.set(tags::PositionProfit, oss.str());
+    
+    // 发送推送
+    if (!sessionManager_.sendMessage(*sessionOpt, msg)) {
+        LOG() << "[SimulationApp] Failed to push position update to " << userId;
+    }
+}
+
+std::optional<SessionID> SimulationApp::findSessionByUserId(const std::string& userId) const {
+    // 遍历所有 Session，找到 clientCompID == userId 的那个
+    std::optional<SessionID> result;
+    
+    sessionManager_.forEachSession([&](const SessionID& sid, std::shared_ptr<Session> session) {
+        // 已找到则跳过后续遍历
+        if (result.has_value()) {
+            return;
+        }
+        // 使用 Session::get_client_comp_id() 获取真实的客户端标识
+        if (session && session->get_client_comp_id() == userId) {
+            result = sid;
+        }
+    });
+    
+    return result;
 }
 
 } // namespace fix40

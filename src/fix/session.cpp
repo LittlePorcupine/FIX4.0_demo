@@ -424,6 +424,26 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
         context.increment_recv_seq_num();
 
         if (context.senderCompID == "SERVER") {
+            // 从 Logon 消息中提取客户端标识
+            // FIX 协议中，客户端发送的 Logon 消息的 SenderCompID 是客户端的标识
+            if (!msg.has(tags::SenderCompID)) {
+                LOG() << "Logon rejected: missing SenderCompID";
+                auto logout_msg = create_logout_message(context.senderCompID, context.targetCompID, 1, "Missing SenderCompID");
+                context.send(logout_msg);
+                context.perform_shutdown("Missing SenderCompID in Logon");
+                return;
+            }
+            std::string clientCompID = msg.get_string(tags::SenderCompID);
+            if (clientCompID.empty()) {
+                LOG() << "Logon rejected: empty SenderCompID";
+                auto logout_msg = create_logout_message(context.senderCompID, context.targetCompID, 1, "Empty SenderCompID");
+                context.send(logout_msg);
+                context.perform_shutdown("Empty SenderCompID in Logon");
+                return;
+            }
+            context.set_client_comp_id(clientCompID);
+            LOG() << "Client CompID extracted from Logon: " << clientCompID;
+            
             const int client_hb_interval = msg.get_int(tags::HeartBtInt);
             // 注意：真实实现应当从会话上下文获取最小和最大值，
             // 此处为了示例假设构造函数已保存这些值。
