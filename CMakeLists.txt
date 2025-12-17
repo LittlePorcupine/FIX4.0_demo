@@ -18,7 +18,7 @@ add_compile_options(-Wall -Wextra -pedantic)
 # =============================================================================
 # CTP 支持选项
 # =============================================================================
-option(ENABLE_CTP "Enable CTP market data adapter" OFF)
+option(ENABLE_CTP "Enable CTP market data adapter" ON)
 
 if(ENABLE_CTP)
     message(STATUS "CTP support: ENABLED")
@@ -70,7 +70,10 @@ set(FIX_ENGINE_SOURCES
 
 # CTP 源文件（条件编译）
 if(ENABLE_CTP)
-    list(APPEND FIX_ENGINE_SOURCES src/market/ctp_md_adapter.cpp)
+    list(APPEND FIX_ENGINE_SOURCES 
+        src/market/ctp_md_adapter.cpp
+        src/market/ctp_trader_adapter.cpp
+    )
 endif()
 
 add_library(fix_engine STATIC ${FIX_ENGINE_SOURCES})
@@ -85,14 +88,16 @@ target_link_libraries(fix_engine PUBLIC SQLite::SQLite3)
 if(ENABLE_CTP)
     if(APPLE)
         # 直接链接动态库文件，避免符号链接问题
-        set(CTP_DYLIB "${CTP_FRAMEWORK_DIR}/thostmduserapi_se.framework/Versions/A/thostmduserapi_se")
-        target_link_libraries(fix_engine PUBLIC "${CTP_DYLIB}")
+        set(CTP_MD_DYLIB "${CTP_FRAMEWORK_DIR}/thostmduserapi_se.framework/Versions/A/thostmduserapi_se")
+        set(CTP_TRADER_DYLIB "${CTP_FRAMEWORK_DIR}/thosttraderapi_se.framework/Versions/A/thosttraderapi_se")
+        target_link_libraries(fix_engine PUBLIC "${CTP_MD_DYLIB}" "${CTP_TRADER_DYLIB}")
         set_target_properties(fix_engine PROPERTIES
-            BUILD_RPATH "${CTP_FRAMEWORK_DIR}/thostmduserapi_se.framework/Versions/A"
+            BUILD_RPATH "${CTP_FRAMEWORK_DIR}/thostmduserapi_se.framework/Versions/A;${CTP_FRAMEWORK_DIR}/thosttraderapi_se.framework/Versions/A"
         )
     elseif(UNIX)
         target_link_libraries(fix_engine PUBLIC
             "${CTP_LIB_DIR}/libthostmduserapi_se.so"
+            "${CTP_LIB_DIR}/libthosttraderapi_se.so"
         )
         set_target_properties(fix_engine PROPERTIES
             BUILD_RPATH "${CTP_LIB_DIR}"
