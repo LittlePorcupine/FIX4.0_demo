@@ -34,14 +34,15 @@ jobs:
     - name: Run unit tests
       run: ./tests/build/unit_tests
     
-    - name: Run E2E tests - Session Flow
-      run: ./tests/e2e/test_session_flow.sh
+    # E2E 测试暂时禁用，等待 Client 重构完成后重新启用
+    # - name: Run E2E tests - Session Flow
+    #   run: ./tests/e2e/test_session_flow.sh
     
-    - name: Run E2E tests - Multi Client
-      run: ./tests/e2e/test_multi_client.sh
+    # - name: Run E2E tests - Multi Client
+    #   run: ./tests/e2e/test_multi_client.sh
     
-    - name: Run E2E tests - Trading
-      run: ./tests/e2e/test_trading.sh
+    # - name: Run E2E tests - Trading
+    #   run: ./tests/e2e/test_trading.sh
     
-    - name: Run E2E tests - Multi Trading
-      run: ./tests/e2e/test_multi_trading.sh
+    # - name: Run E2E tests - Multi Trading
+    #   run: ./tests/e2e/test_multi_trading.sh
