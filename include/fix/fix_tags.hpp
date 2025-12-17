@@ -253,5 +253,36 @@ constexpr int UpdateType = 10020;
 /// @brief 更新原因 (1=行情变化, 2=成交, 3=出入金)
 constexpr int UpdateReason = 10021;
 
+// ============================================================================
+// 合约搜索相关自定义标签
+// ============================================================================
+
+/// @brief 搜索关键字（合约代码前缀）
+constexpr int SearchPattern = 10022;
+
+/// @brief 搜索结果数量上限
+constexpr int MaxResults = 10023;
+
+/// @brief 搜索结果数量
+constexpr int ResultCount = 10024;
+
+/// @brief 合约列表（逗号分隔）
+constexpr int InstrumentList = 10025;
+
+/// @brief 交易所代码
+constexpr int ExchangeID = 10026;
+
+/// @brief 品种代码
+constexpr int ProductID = 10027;
+
+/// @brief 最小变动价位
+constexpr int PriceTick = 10028;
+
+/// @brief 合约乘数
+constexpr int VolumeMultiple = 10029;
+
+/// @brief 保证金率
+constexpr int MarginRate = 10030;
+
 } // namespace tags
 } // namespace fix40

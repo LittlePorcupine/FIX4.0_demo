@@ -354,6 +354,17 @@ private:
     void handlePositionQuery(const FixMessage& msg, const SessionID& sessionID, const std::string& userId);
 
     /**
+     * @brief 处理合约搜索请求 (MsgType = U7)
+     * 
+     * 根据前缀搜索合约，返回 U8 响应。
+     * 用于 Client 端的合约代码自动补全功能。
+     * 
+     * @param msg FIX 消息
+     * @param sessionID 会话标识
+     */
+    void handleInstrumentSearch(const FixMessage& msg, const SessionID& sessionID);
+
+    /**
      * @brief 发送拒绝消息
      * 
      * 当收到无法处理的消息时，发送 BusinessMessageReject。
