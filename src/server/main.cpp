@@ -34,6 +34,12 @@ namespace {
 // 全局停止标志
 std::atomic<bool> g_running{true};
 
+// 常量定义
+constexpr size_t CTP_SUBSCRIPTION_BATCH_SIZE = 500;
+constexpr int CTP_TRADER_CONNECT_TIMEOUT_SEC = 15;
+constexpr int CTP_INSTRUMENT_QUERY_TIMEOUT_SEC = 60;
+constexpr int CTP_MD_CONNECT_WAIT_SEC = 3;
+
 /**
  * @brief 简单的 INI 文件解析器
  */
@@ -81,11 +87,26 @@ std::string findConfigFile(const std::string& filename, const char* argv0) {
     return "";
 }
 
+/**
+ * @brief 添加回退测试合约
+ * 
+ * 当无法从 CTP 查询合约时使用
+ */
+void addFallbackInstruments(fix40::InstrumentManager& instrumentMgr) {
+    LOG() << "Adding fallback test instruments";
+    instrumentMgr.addInstrument(fix40::Instrument("IF2601", "CFFEX", "IF", 0.2, 300, 0.12));
+    instrumentMgr.addInstrument(fix40::Instrument("IC2601", "CFFEX", "IC", 0.2, 200, 0.12));
+    instrumentMgr.addInstrument(fix40::Instrument("IH2601", "CFFEX", "IH", 0.2, 300, 0.12));
+}
+
 #ifdef ENABLE_CTP
 /**
  * @brief 行情转发线程函数
  * 
- * 从行情队列读取数据，推送到撮合引擎
+ * 从行情队列读取数据，推送到撮合引擎。
+ * 使用 100ms 超时轮询，确保能够响应停止信号。
+ * 
+ * @note 关闭时队列中未处理的数据会被丢弃，这是可接受的行为
  */
 void marketDataForwarder(
     moodycamel::BlockingConcurrentQueue<fix40::MarketData>& mdQueue,
@@ -96,7 +117,6 @@ void marketDataForwarder(
     fix40::MarketData md;
     
     while (running.load()) {
-        // 带超时的等待，避免阻塞关闭
         if (mdQueue.wait_dequeue_timed(md, std::chrono::milliseconds(100))) {
             engine.submitMarketData(md);
         }
@@ -109,19 +129,66 @@ void marketDataForwarder(
 } // anonymous namespace
 
 /**
+ * @brief 打印使用帮助
+ */
+void printUsage(const char* programName) {
+    std::cerr << "Usage: " << programName << " [options]\n"
+              << "Options:\n"
+              << "  -c, --config <path>   Path to config.ini (default: ./config.ini)\n"
+              << "  -s, --simnow <path>   Path to simnow.ini (default: ./simnow.ini)\n"
+              << "  -p, --port <port>     Server port (overrides config file)\n"
+              << "  -t, --threads <num>   Worker threads (0 = auto, overrides config)\n"
+              << "  -h, --help            Show this help message\n"
+              << "\nConfig file search order:\n"
+              << "  1. Path specified by command line option\n"
+              << "  2. Current working directory\n"
+              << "  3. Executable directory\n";
+}
+
+/**
  * @brief 服务端主函数
  */
 int main(int argc, char* argv[]) {
     // 忽略 SIGPIPE 信号
     signal(SIGPIPE, SIG_IGN);
 
+    // 命令行参数
+    std::string configPathArg;
+    std::string simnowPathArg;
+    int portArg = -1;
+    int threadsArg = -1;
+
+    // 解析命令行参数
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if ((arg == "-c" || arg == "--config") && i + 1 < argc) {
+            configPathArg = argv[++i];
+        } else if ((arg == "-s" || arg == "--simnow") && i + 1 < argc) {
+            simnowPathArg = argv[++i];
+        } else if ((arg == "-p" || arg == "--port") && i + 1 < argc) {
+            portArg = std::stoi(argv[++i]);
+        } else if ((arg == "-t" || arg == "--threads") && i + 1 < argc) {
+            threadsArg = std::stoi(argv[++i]);
+        } else if (arg == "-h" || arg == "--help") {
+            printUsage(argv[0]);
+            return 0;
+        } else {
+            std::cerr << "Unknown option: " << arg << std::endl;
+            printUsage(argv[0]);
+            return 1;
+        }
+    }
+
     try {
         // =====================================================================
         // 1. 加载 config.ini
         // =====================================================================
-        std::string configPath = findConfigFile("config.ini", argv[0]);
-        if (configPath.empty()) {
+        std::string configPath = configPathArg.empty() 
+            ? findConfigFile("config.ini", argv[0]) 
+            : configPathArg;
+        if (configPath.empty() || !std::filesystem::exists(configPath)) {
             std::cerr << "Fatal: config.ini not found" << std::endl;
+            printUsage(argv[0]);
             return 1;
         }
         if (!fix40::Config::instance().load(configPath)) {
@@ -130,11 +197,11 @@ int main(int argc, char* argv[]) {
         }
         LOG() << "Config loaded from " << std::filesystem::absolute(configPath).string();
 
-        // 解析命令行参数
-        int port = fix40::Config::instance().get_int("server", "port", 9000);
-        int numThreads = fix40::Config::instance().get_int("server", "default_threads", 0);
-        if (argc > 1) numThreads = std::stoi(argv[1]);
-        if (argc > 2) port = std::stoi(argv[2]);
+        // 从配置文件读取默认值，命令行参数优先
+        int port = (portArg > 0) ? portArg 
+            : fix40::Config::instance().get_int("server", "port", 9000);
+        int numThreads = (threadsArg >= 0) ? threadsArg 
+            : fix40::Config::instance().get_int("server", "default_threads", 0);
 
         // =====================================================================
         // 2. 创建 SimulationApp
@@ -145,20 +212,27 @@ int main(int argc, char* argv[]) {
 
 #ifdef ENABLE_CTP
         // =====================================================================
-        // 3. 加载 simnow.ini 并连接 CTP
+        // 3. CTP 行情相关变量（声明在外层作用域）
         // =====================================================================
-        std::string simnowPath = findConfigFile("simnow.ini", argv[0]);
+        moodycamel::BlockingConcurrentQueue<fix40::MarketData> mdQueue;
+        std::unique_ptr<fix40::CtpMdAdapter> mdAdapter;
+        std::thread mdForwarderThread;
+        
+        // =====================================================================
+        // 4. 加载 simnow.ini 并连接 CTP
+        // =====================================================================
+        std::string simnowPath = simnowPathArg.empty()
+            ? findConfigFile("simnow.ini", argv[0])
+            : simnowPathArg;
         if (simnowPath.empty()) {
             LOG() << "Warning: simnow.ini not found, using fallback test instruments";
-            // 回退：使用测试合约
-            instrumentMgr.addInstrument(fix40::Instrument("IF2601", "CFFEX", "IF", 0.2, 300, 0.12));
-            instrumentMgr.addInstrument(fix40::Instrument("IC2601", "CFFEX", "IC", 0.2, 200, 0.12));
+            addFallbackInstruments(instrumentMgr);
         } else {
             LOG() << "SimNow config loaded from " << simnowPath;
             auto simnowConfig = parseIniFile(simnowPath);
             
             // -----------------------------------------------------------------
-            // 3.1 连接交易前置，查询合约列表
+            // 4.1 连接交易前置，查询合约列表
             // -----------------------------------------------------------------
             if (!simnowConfig["td_front"].empty()) {
                 fix40::CtpTraderConfig traderConfig;
@@ -173,7 +247,6 @@ int main(int argc, char* argv[]) {
                     traderConfig.flowPath = "./ctp_trader_flow/";
                 }
                 
-                // 创建流文件目录
                 std::filesystem::create_directories(traderConfig.flowPath);
                 
                 LOG() << "Connecting to CTP Trader: " << traderConfig.traderFront;
@@ -185,16 +258,18 @@ int main(int argc, char* argv[]) {
                 });
                 
                 if (traderAdapter.start()) {
-                    if (traderAdapter.waitForReady(15)) {
+                    if (traderAdapter.waitForReady(CTP_TRADER_CONNECT_TIMEOUT_SEC)) {
                         LOG() << "CTP Trader connected, querying instruments...";
                         traderAdapter.queryInstruments();
-                        if (traderAdapter.waitForQueryComplete(60)) {
+                        if (traderAdapter.waitForQueryComplete(CTP_INSTRUMENT_QUERY_TIMEOUT_SEC)) {
                             LOG() << "Loaded " << instrumentMgr.size() << " instruments from CTP";
                         } else {
-                            LOG() << "Warning: Instrument query timeout";
+                            LOG() << "Warning: Instrument query timeout (loaded " 
+                                  << instrumentMgr.size() << " instruments so far)";
                         }
                     } else {
-                        LOG() << "Warning: CTP Trader connection timeout";
+                        LOG() << "Warning: CTP Trader connection timeout after " 
+                              << CTP_TRADER_CONNECT_TIMEOUT_SEC << " seconds";
                     }
                     traderAdapter.stop();
                 } else {
@@ -204,17 +279,13 @@ int main(int argc, char* argv[]) {
             
             // 如果没有查询到合约，使用回退
             if (instrumentMgr.size() == 0) {
-                LOG() << "Warning: No instruments loaded, using fallback";
-                instrumentMgr.addInstrument(fix40::Instrument("IF2601", "CFFEX", "IF", 0.2, 300, 0.12));
+                LOG() << "Warning: No instruments loaded from CTP";
+                addFallbackInstruments(instrumentMgr);
             }
             
             // -----------------------------------------------------------------
-            // 3.2 连接行情前置
+            // 4.2 连接行情前置
             // -----------------------------------------------------------------
-            moodycamel::BlockingConcurrentQueue<fix40::MarketData> mdQueue;
-            std::unique_ptr<fix40::CtpMdAdapter> mdAdapter;
-            std::thread mdForwarderThread;
-            
             if (!simnowConfig["md_front"].empty()) {
                 fix40::CtpMdConfig mdConfig;
                 mdConfig.mdFront = simnowConfig["md_front"];
@@ -226,7 +297,6 @@ int main(int argc, char* argv[]) {
                     mdConfig.flowPath = "./ctp_md_flow/";
                 }
                 
-                // 创建流文件目录
                 std::filesystem::create_directories(mdConfig.flowPath);
                 
                 LOG() << "Connecting to CTP MD: " << mdConfig.mdFront;
@@ -238,20 +308,19 @@ int main(int argc, char* argv[]) {
                 
                 if (mdAdapter->start()) {
                     // 等待连接就绪
-                    std::this_thread::sleep_for(std::chrono::seconds(3));
+                    // TODO: 改用状态回调或条件变量替代硬等待
+                    std::this_thread::sleep_for(std::chrono::seconds(CTP_MD_CONNECT_WAIT_SEC));
                     
                     // 订阅所有已加载的合约
                     auto allInstruments = instrumentMgr.getAllInstrumentIds();
                     if (!allInstruments.empty()) {
-                        // 分批订阅，每批最多 500 个
-                        const size_t batchSize = 500;
-                        for (size_t i = 0; i < allInstruments.size(); i += batchSize) {
-                            size_t end = std::min(i + batchSize, allInstruments.size());
+                        for (size_t i = 0; i < allInstruments.size(); i += CTP_SUBSCRIPTION_BATCH_SIZE) {
+                            size_t end = std::min(i + CTP_SUBSCRIPTION_BATCH_SIZE, allInstruments.size());
                             std::vector<std::string> batch(allInstruments.begin() + i, 
                                                            allInstruments.begin() + end);
                             mdAdapter->subscribe(batch);
                             LOG() << "Subscribed " << batch.size() << " instruments (batch " 
-                                  << (i / batchSize + 1) << ")";
+                                  << (i / CTP_SUBSCRIPTION_BATCH_SIZE + 1) << ")";
                         }
                     }
                     
@@ -264,11 +333,11 @@ int main(int argc, char* argv[]) {
                     LOG() << "Warning: Failed to start CTP MD adapter";
                 }
             }
+        }
 #else
         // 非 CTP 模式：使用测试合约
         LOG() << "CTP disabled, using test instruments";
-        instrumentMgr.addInstrument(fix40::Instrument("IF2601", "CFFEX", "IF", 0.2, 300, 0.12));
-        instrumentMgr.addInstrument(fix40::Instrument("IC2601", "CFFEX", "IC", 0.2, 200, 0.12));
+        addFallbackInstruments(instrumentMgr);
         instrumentMgr.addInstrument(fix40::Instrument("AAPL", "NASDAQ", "AAPL", 0.01, 1, 1.0));
         instrumentMgr.addInstrument(fix40::Instrument("TSLA", "NASDAQ", "TSLA", 0.01, 1, 1.0));
 #endif
@@ -276,7 +345,7 @@ int main(int argc, char* argv[]) {
         LOG() << "Registered " << instrumentMgr.size() << " instruments";
 
         // =====================================================================
-        // 4. 启动服务
+        // 5. 启动服务
         // =====================================================================
         app.start();
         
@@ -284,21 +353,20 @@ int main(int argc, char* argv[]) {
         server.start();  // 阻塞直到收到停止信号
         
         // =====================================================================
-        // 5. 优雅关闭
+        // 6. 优雅关闭
         // =====================================================================
         g_running = false;
         
 #ifdef ENABLE_CTP
-            // 停止行情转发线程
-            if (mdForwarderThread.joinable()) {
-                mdForwarderThread.join();
-            }
-            
-            // 停止行情适配器
-            if (mdAdapter) {
-                mdAdapter->stop();
-            }
-        }  // simnowPath scope
+        // 停止行情转发线程
+        if (mdForwarderThread.joinable()) {
+            mdForwarderThread.join();
+        }
+        
+        // 停止行情适配器
+        if (mdAdapter) {
+            mdAdapter->stop();
+        }
 #endif
         
         app.stop();
