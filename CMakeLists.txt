@@ -96,8 +96,8 @@ if(ENABLE_CTP)
         )
     elseif(UNIX)
         target_link_libraries(fix_engine PUBLIC
-            "${CTP_LIB_DIR}/libthostmduserapi_se.so"
-            "${CTP_LIB_DIR}/libthosttraderapi_se.so"
+            "${CTP_LIB_DIR}/thostmduserapi_se.so"
+            "${CTP_LIB_DIR}/thosttraderapi_se.so"
         )
         set_target_properties(fix_engine PROPERTIES
             BUILD_RPATH "${CTP_LIB_DIR}"
