@@ -18,7 +18,7 @@ add_compile_options(-Wall -Wextra -pedantic)
 # =============================================================================
 # CTP 支持选项
 # =============================================================================
-option(ENABLE_CTP "Enable CTP market data adapter" OFF)
+option(ENABLE_CTP "Enable CTP market data adapter" ON)
 
 if(ENABLE_CTP)
     message(STATUS "CTP support: ENABLED")
@@ -70,7 +70,10 @@ set(FIX_ENGINE_SOURCES
 
 # CTP 源文件（条件编译）
 if(ENABLE_CTP)
-    list(APPEND FIX_ENGINE_SOURCES src/market/ctp_md_adapter.cpp)
+    list(APPEND FIX_ENGINE_SOURCES 
+        src/market/ctp_md_adapter.cpp
+        src/market/ctp_trader_adapter.cpp
+    )
 endif()
 
 add_library(fix_engine STATIC ${FIX_ENGINE_SOURCES})
@@ -85,17 +88,40 @@ target_link_libraries(fix_engine PUBLIC SQLite::SQLite3)
 if(ENABLE_CTP)
     if(APPLE)
         # 直接链接动态库文件，避免符号链接问题
-        set(CTP_DYLIB "${CTP_FRAMEWORK_DIR}/thostmduserapi_se.framework/Versions/A/thostmduserapi_se")
-        target_link_libraries(fix_engine PUBLIC "${CTP_DYLIB}")
+        set(CTP_MD_DYLIB "${CTP_FRAMEWORK_DIR}/thostmduserapi_se.framework/Versions/A/thostmduserapi_se")
+        set(CTP_TRADER_DYLIB "${CTP_FRAMEWORK_DIR}/thosttraderapi_se.framework/Versions/A/thosttraderapi_se")
+        target_link_libraries(fix_engine PUBLIC "${CTP_MD_DYLIB}" "${CTP_TRADER_DYLIB}")
         set_target_properties(fix_engine PROPERTIES
-            BUILD_RPATH "${CTP_FRAMEWORK_DIR}/thostmduserapi_se.framework/Versions/A"
+            BUILD_RPATH "${CTP_FRAMEWORK_DIR}/thostmduserapi_se.framework/Versions/A;${CTP_FRAMEWORK_DIR}/thosttraderapi_se.framework/Versions/A"
         )
     elseif(UNIX)
-        target_link_libraries(fix_engine PUBLIC
-            "${CTP_LIB_DIR}/libthostmduserapi_se.so"
+        # Linux: 使用 IMPORTED 库方式链接，确保路径正确传递给链接器
+        set(CTP_MD_SO "${CMAKE_SOURCE_DIR}/third_party/ctp/linux/lib/thostmduserapi_se.so")
+        set(CTP_TRADER_SO "${CMAKE_SOURCE_DIR}/third_party/ctp/linux/lib/thosttraderapi_se.so")
+        
+        # 检查库文件是否存在
+        if(NOT EXISTS "${CTP_MD_SO}")
+            message(FATAL_ERROR "CTP MD library not found: ${CTP_MD_SO}")
+        endif()
+        if(NOT EXISTS "${CTP_TRADER_SO}")
+            message(FATAL_ERROR "CTP Trader library not found: ${CTP_TRADER_SO}")
+        endif()
+        
+        # 创建 IMPORTED 库目标
+        add_library(ctp_md SHARED IMPORTED)
+        set_target_properties(ctp_md PROPERTIES
+            IMPORTED_LOCATION "${CTP_MD_SO}"
         )
+        
+        add_library(ctp_trader SHARED IMPORTED)
+        set_target_properties(ctp_trader PROPERTIES
+            IMPORTED_LOCATION "${CTP_TRADER_SO}"
+        )
+        
+        target_link_libraries(fix_engine PUBLIC ctp_md ctp_trader)
         set_target_properties(fix_engine PROPERTIES
-            BUILD_RPATH "${CTP_LIB_DIR}"
+            BUILD_RPATH "${CMAKE_SOURCE_DIR}/third_party/ctp/linux/lib"
+            INSTALL_RPATH "${CMAKE_SOURCE_DIR}/third_party/ctp/linux/lib"
         )
     endif()
 endif()

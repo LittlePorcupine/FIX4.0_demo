@@ -159,6 +159,39 @@ public:
      */
     size_t size() const;
 
+    /**
+     * @brief 按前缀搜索合约
+     *
+     * 用于实现合约代码的自动补全功能。
+     *
+     * @param prefix 合约代码前缀（如 "IF"）
+     * @param limit 返回结果数量上限（默认 10）
+     * @return 匹配的合约代码列表（按字母排序）
+     *
+     * @par 使用示例
+     * @code
+     * auto results = mgr.searchByPrefix("IF", 5);
+     * // 可能返回: ["IF2501", "IF2502", "IF2503", "IF2506", "IF2509"]
+     * @endcode
+     */
+    std::vector<std::string> searchByPrefix(const std::string& prefix, size_t limit = 10) const;
+
+    /**
+     * @brief 按品种获取所有合约
+     *
+     * @param productId 品种代码（如 "IF"）
+     * @return 该品种的所有合约代码列表
+     */
+    std::vector<std::string> getInstrumentsByProduct(const std::string& productId) const;
+
+    /**
+     * @brief 按交易所获取所有合约
+     *
+     * @param exchangeId 交易所代码（如 "CFFEX"）
+     * @return 该交易所的所有合约代码列表
+     */
+    std::vector<std::string> getInstrumentsByExchange(const std::string& exchangeId) const;
+
     // -------------------------------------------------------------------------
     // 更新方法
     // -------------------------------------------------------------------------

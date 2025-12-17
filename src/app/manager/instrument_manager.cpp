@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <algorithm>
 
 namespace fix40 {
 
@@ -324,6 +325,64 @@ bool InstrumentManager::updatePreSettlementPrice(const std::string& instrumentId
 void InstrumentManager::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     instruments_.clear();
+}
+
+std::vector<std::string> InstrumentManager::searchByPrefix(const std::string& prefix, size_t limit) const {
+    std::vector<std::string> results;
+    
+    if (prefix.empty()) {
+        return results;
+    }
+    
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // 收集所有匹配的合约
+    for (const auto& [id, inst] : instruments_) {
+        if (id.size() >= prefix.size() && 
+            id.compare(0, prefix.size(), prefix) == 0) {
+            results.push_back(id);
+        }
+    }
+    
+    // 按字母排序
+    std::sort(results.begin(), results.end());
+    
+    // 限制返回数量
+    if (results.size() > limit) {
+        results.resize(limit);
+    }
+    
+    return results;
+}
+
+std::vector<std::string> InstrumentManager::getInstrumentsByProduct(const std::string& productId) const {
+    std::vector<std::string> results;
+    
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    for (const auto& [id, inst] : instruments_) {
+        if (inst.productId == productId) {
+            results.push_back(id);
+        }
+    }
+    
+    std::sort(results.begin(), results.end());
+    return results;
+}
+
+std::vector<std::string> InstrumentManager::getInstrumentsByExchange(const std::string& exchangeId) const {
+    std::vector<std::string> results;
+    
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    for (const auto& [id, inst] : instruments_) {
+        if (inst.exchangeId == exchangeId) {
+            results.push_back(id);
+        }
+    }
+    
+    std::sort(results.begin(), results.end());
+    return results;
 }
 
 } // namespace fix40
