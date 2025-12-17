@@ -187,6 +187,10 @@ void CtpTraderAdapter::stop() {
 
     LOG() << "[CTP Trader] 停止交易适配器";
     running_ = false;
+    
+    // 唤醒所有等待线程
+    readyCv_.notify_all();
+    queryCv_.notify_all();
 
     if (api_) {
         api_->Release();
@@ -254,6 +258,11 @@ void CtpTraderAdapter::doAuthenticate() {
     state_ = CtpTraderState::AUTHENTICATING;
     int ret = api_->ReqAuthenticate(&req, ++requestId_);
     LOG() << "[CTP Trader] 发送认证请求, 返回: " << ret;
+    
+    if (ret != 0) {
+        LOG() << "[CTP Trader] 认证请求发送失败";
+        notifyState(CtpTraderState::ERROR, "认证请求发送失败");
+    }
 }
 
 void CtpTraderAdapter::doLogin() {
@@ -264,10 +273,18 @@ void CtpTraderAdapter::doLogin() {
 
     state_ = CtpTraderState::LOGGING_IN;
     
-    // CTP 6.6.1+ 需要传入系统信息
-    // 这里简化处理，传入空的系统信息
+    // macOS 版 CTP 6.6.1+ 需要传入系统信息，Linux 版不需要
+#ifdef __APPLE__
     int ret = api_->ReqUserLogin(&req, ++requestId_, 0, nullptr);
+#else
+    int ret = api_->ReqUserLogin(&req, ++requestId_);
+#endif
     LOG() << "[CTP Trader] 发送登录请求, 返回: " << ret;
+    
+    if (ret != 0) {
+        LOG() << "[CTP Trader] 登录请求发送失败";
+        notifyState(CtpTraderState::ERROR, "登录请求发送失败");
+    }
 }
 
 void CtpTraderAdapter::notifyState(CtpTraderState state, const std::string& message) {
@@ -314,7 +331,7 @@ CtpTraderConfig loadCtpTraderConfig(const std::string& filename) {
         trim(key);
         trim(value);
 
-        if (key == "trader_front") config.traderFront = value;
+        if (key == "trader_front" || key == "td_front") config.traderFront = value;
         else if (key == "broker_id") config.brokerId = value;
         else if (key == "user_id") config.userId = value;
         else if (key == "password") config.password = value;
