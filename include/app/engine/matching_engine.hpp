@@ -37,6 +37,14 @@ class InstrumentManager;
 using ExecutionReportCallback = std::function<void(const SessionID&, const ExecutionReport&)>;
 
 /**
+ * @brief 行情更新回调类型
+ * 
+ * 当行情数据更新时调用此回调，用于触发账户价值重算。
+ * 参数：instrumentId - 合约代码，lastPrice - 最新价
+ */
+using MarketDataUpdateCallback = std::function<void(const std::string&, double)>;
+
+/**
  * @class MatchingEngine
  * @brief 行情驱动撮合引擎
  *
@@ -135,6 +143,17 @@ public:
      */
     void setExecutionReportCallback(ExecutionReportCallback callback) {
         execReportCallback_ = std::move(callback);
+    }
+
+    /**
+     * @brief 设置行情更新回调
+     * @param callback 回调函数
+     * 
+     * 当行情数据更新时调用，用于触发账户价值重算和推送。
+     * 必须在 start() 之前调用。
+     */
+    void setMarketDataUpdateCallback(MarketDataUpdateCallback callback) {
+        marketDataUpdateCallback_ = std::move(callback);
     }
 
     /**
@@ -365,6 +384,9 @@ private:
 
     /// ExecutionReport 回调
     ExecutionReportCallback execReportCallback_;
+
+    /// 行情更新回调
+    MarketDataUpdateCallback marketDataUpdateCallback_;
 
     /// ExecID 计数器
     uint64_t nextExecID_ = 1;

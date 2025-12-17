@@ -522,7 +522,12 @@ void MatchingEngine::handleMarketData(const MarketData& md) {
         instrumentManager_->updateLimitPrices(instrumentId, md.upperLimitPrice, md.lowerLimitPrice);
     }
 
-    // 3. 遍历该合约的挂单，检查是否可成交
+    // 3. 触发行情更新回调（用于账户价值重算）
+    if (marketDataUpdateCallback_ && md.lastPrice > 0) {
+        marketDataUpdateCallback_(instrumentId, md.lastPrice);
+    }
+
+    // 4. 遍历该合约的挂单，检查是否可成交
     auto it = pendingOrders_.find(instrumentId);
     if (it == pendingOrders_.end() || it->second.empty()) {
         return;
