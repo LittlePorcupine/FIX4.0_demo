@@ -487,11 +487,16 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
 }
 void DisconnectedState::onTimerCheck([[maybe_unused]] Session& context) {} // 无操作
 void DisconnectedState::onSessionStart(Session& context) {
-    // 客户端发起 Logon
-    if (context.senderCompID == "CLIENT") {
+    // 判断是否为客户端：targetCompID 为 "SERVER" 表示这是客户端 Session
+    // 服务端 Session 的 senderCompID 为 "SERVER"
+    bool isClient = (context.targetCompID == "SERVER");
+    
+    if (isClient) {
+        // 客户端发起 Logon
         auto logon_msg = create_logon_message(context.senderCompID, context.targetCompID, 1, context.get_heart_bt_int());
         context.send(logon_msg);
         context.changeState(std::make_unique<LogonSentState>());
+        LOG() << "Client session started, sending Logon to SERVER.";
     } else {
         // 服务器端仅等待
         LOG() << "Server session started, waiting for client Logon.";

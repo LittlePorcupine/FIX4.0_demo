@@ -174,6 +174,8 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
     
     // 记录订单与会话的映射
     orderSessionMap_[order.clOrdID] = event.sessionID;
+    // 记录订单与用户ID的映射（用于持仓更新）
+    orderUserMap_[order.clOrdID] = event.userId;
     
     // 获取行情快照
     auto snapshotIt = marketSnapshots_.find(order.symbol);
@@ -188,8 +190,17 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
     // 风控检查（如果设置了RiskManager）
     // =========================================================================
     if (riskManager_ && accountManager_ && instrumentManager_) {
-        // 获取账户信息（使用sessionID作为accountId）
-        std::string accountId = event.sessionID.to_string();
+        // 获取账户信息（使用从 Session 提取的真实用户ID）
+        std::string accountId = event.userId;
+        if (accountId.empty()) {
+            LOG() << "[MatchingEngine] Order rejected: empty userId";
+            order.status = OrderStatus::REJECTED;
+            auto report = buildRejectReport(order, RejectReason::NONE, "Invalid user identity");
+            report.execID = generateExecID();
+            sendExecutionReport(event.sessionID, report);
+            orderSessionMap_.erase(order.clOrdID); orderUserMap_.erase(order.clOrdID);
+            return;
+        }
         auto accountOpt = accountManager_->getAccount(accountId);
         
         // 如果账户不存在，创建默认账户
@@ -223,7 +234,7 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
             report.execID = generateExecID();
             
             sendExecutionReport(event.sessionID, report);
-            orderSessionMap_.erase(order.clOrdID);
+            orderSessionMap_.erase(order.clOrdID); orderUserMap_.erase(order.clOrdID);
             return;
         }
         
@@ -241,7 +252,7 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
             report.execID = generateExecID();
             
             sendExecutionReport(event.sessionID, report);
-            orderSessionMap_.erase(order.clOrdID);
+            orderSessionMap_.erase(order.clOrdID); orderUserMap_.erase(order.clOrdID);
             return;
         }
         
@@ -258,7 +269,7 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
             report.execID = generateExecID();
             
             sendExecutionReport(event.sessionID, report);
-            orderSessionMap_.erase(order.clOrdID);
+            orderSessionMap_.erase(order.clOrdID); orderUserMap_.erase(order.clOrdID);
             return;
         }
         
@@ -284,7 +295,7 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
                 report.execID = generateExecID();
                 
                 sendExecutionReport(event.sessionID, report);
-                orderSessionMap_.erase(order.clOrdID);
+                orderSessionMap_.erase(order.clOrdID); orderUserMap_.erase(order.clOrdID);
                 return;
             }
         } else {
@@ -300,7 +311,7 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
                 report.execID = generateExecID();
                 
                 sendExecutionReport(event.sessionID, report);
-                orderSessionMap_.erase(order.clOrdID);
+                orderSessionMap_.erase(order.clOrdID); orderUserMap_.erase(order.clOrdID);
                 return;
             }
         }
@@ -323,7 +334,7 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
         // 立即成交
         order.status = OrderStatus::NEW;  // 先设为NEW，executeFill会更新为FILLED
         executeFill(order, fillPrice, order.orderQty);
-        orderSessionMap_.erase(order.clOrdID);
+        orderSessionMap_.erase(order.clOrdID); orderUserMap_.erase(order.clOrdID);
     } else {
         // 挂单等待
         order.status = OrderStatus::NEW;
@@ -400,7 +411,7 @@ void MatchingEngine::handle_cancel_request(const OrderEvent& event) {
         LOG() << "[MatchingEngine] Order " << req->origClOrdID << " canceled";
         
         // 清理映射
-        orderSessionMap_.erase(req->origClOrdID);
+        orderSessionMap_.erase(req->origClOrdID); orderUserMap_.erase(req->origClOrdID);
     } else {
         // 撤单失败（订单不存在或已成交）
         report.ordStatus = OrderStatus::REJECTED;
@@ -542,7 +553,7 @@ void MatchingEngine::handleMarketData(const MarketData& md) {
         // 尝试撮合
         if (tryMatch(order, snapshot)) {
             // 成交后移除订单
-            orderSessionMap_.erase(order.clOrdID);
+            orderSessionMap_.erase(order.clOrdID); orderUserMap_.erase(order.clOrdID);
             orderIt = orders.erase(orderIt);
         } else {
             ++orderIt;
@@ -632,52 +643,15 @@ void MatchingEngine::executeFill(Order& order, double fillPrice, int64_t fillQty
     // 更新账户和持仓（如果设置了管理器）
     // =========================================================================
     auto sessionIt = orderSessionMap_.find(order.clOrdID);
+    auto userIt = orderUserMap_.find(order.clOrdID);
     std::string accountId;
-    if (sessionIt != orderSessionMap_.end()) {
-        accountId = sessionIt->second.to_string();
+    if (userIt != orderUserMap_.end()) {
+        accountId = userIt->second;  // 使用真实的用户ID
     }
     
-    if (accountManager_ && positionManager_ && instrumentManager_ && !accountId.empty()) {
-        // 获取合约信息
-        auto instPtr = instrumentManager_->getInstrument(order.symbol);
-        if (instPtr) {
-            int volumeMultiple = instPtr->volumeMultiple;
-            double marginRate = instPtr->marginRate;
-            
-            // 计算实际成交保证金
-            double actualMargin = fillPrice * fillQty * volumeMultiple * marginRate;
-            
-            // 计算下单时冻结的保证金（使用订单价格或估算价格）
-            double estimatedPrice = order.price > 0 ? order.price : fillPrice;
-            double frozenMargin = estimatedPrice * fillQty * volumeMultiple * marginRate;
-            
-            // 假设是开仓（简化处理）
-            // 实际应用中需要根据订单的开平标志来判断
-            
-            // 更新持仓
-            positionManager_->openPosition(
-                accountId, 
-                order.symbol, 
-                order.side, 
-                fillQty, 
-                fillPrice, 
-                actualMargin
-            );
-            
-            // 确认保证金（冻结转占用）
-            // frozenMargin: 下单时冻结的金额
-            // actualMargin: 实际成交占用的金额
-            // 差额会返还到可用资金
-            accountManager_->confirmMargin(accountId, frozenMargin, actualMargin);
-            
-            LOG() << "[MatchingEngine] Position updated for " << accountId 
-                  << ": " << order.symbol 
-                  << " " << (order.side == OrderSide::BUY ? "LONG" : "SHORT")
-                  << " " << fillQty << " @ " << fillPrice
-                  << ", frozenMargin=" << frozenMargin
-                  << ", actualMargin=" << actualMargin;
-        }
-    }
+    // 注意：持仓和保证金的处理由 SimulationApp::handleFill 统一处理
+    // MatchingEngine 只负责撮合，不直接操作持仓
+    // 这样可以正确处理开平仓逻辑（买入平空、卖出平多）
     
     // 发送 ExecutionReport
     if (sessionIt != orderSessionMap_.end()) {

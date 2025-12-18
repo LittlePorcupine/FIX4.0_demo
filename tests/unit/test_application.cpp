@@ -341,8 +341,8 @@ TEST_CASE("MatchingEngine basic operations", "[application][engine]") {
         cancelReq.sessionID = sid;
         
         // 提交事件不应该阻塞
-        REQUIRE_NOTHROW(engine.submit(OrderEvent::newOrder(order)));
-        REQUIRE_NOTHROW(engine.submit(OrderEvent::cancelRequest(cancelReq)));
+        REQUIRE_NOTHROW(engine.submit(OrderEvent::newOrder(order, "testuser")));
+        REQUIRE_NOTHROW(engine.submit(OrderEvent::cancelRequest(cancelReq, "testuser")));
         REQUIRE_NOTHROW(engine.submit(OrderEvent{OrderEventType::SESSION_LOGON, sid}));
         REQUIRE_NOTHROW(engine.submit(OrderEvent{OrderEventType::SESSION_LOGOUT, sid}));
         
@@ -468,7 +468,7 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
         order.ordType = OrderType::LIMIT;
         order.sessionID = sid;
         
-        engine.submit(OrderEvent::newOrder(order));
+        engine.submit(OrderEvent::newOrder(order, "testuser"));
         
         // 轮询等待报告到达
         REQUIRE(waitFor([&]() {
@@ -501,7 +501,7 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
         buyOrder.ordType = OrderType::LIMIT;
         buyOrder.sessionID = sid;
         
-        engine.submit(OrderEvent::newOrder(buyOrder));
+        engine.submit(OrderEvent::newOrder(buyOrder, "testuser"));
         
         // 等待买单确认（挂单）
         REQUIRE(waitFor([&]() {
@@ -567,7 +567,7 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
         order.ordType = OrderType::LIMIT;
         order.sessionID = sid;
         
-        engine.submit(OrderEvent::newOrder(order));
+        engine.submit(OrderEvent::newOrder(order, "testuser"));
         
         // 等待订单确认
         REQUIRE(waitFor([&]() {
@@ -587,7 +587,7 @@ TEST_CASE("MatchingEngine with OrderBook integration", "[application][engine][or
         cancel.symbol = "AAPL";
         cancel.sessionID = sid;
         
-        engine.submit(OrderEvent::cancelRequest(cancel));
+        engine.submit(OrderEvent::cancelRequest(cancel, "testuser"));
         
         // 等待撤单确认
         REQUIRE(waitFor([&]() {

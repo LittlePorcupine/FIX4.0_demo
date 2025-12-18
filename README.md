@@ -1,91 +1,150 @@
-# FIX 4.0 Demo
+# FIX 4.0 模拟交易系统
 
-一个基于 C++17 的 FIX 4.0 协议演示项目，包含服务端和客户端实现。
+基于 C++17 实现的 FIX 4.0 协议模拟交易系统，支持期货模拟交易。
 
 ## 功能
 
-- 完整的 FIX 4.0 会话层：Logon、Heartbeat、TestRequest、Logout
-- 基于 Reactor 模式的事件驱动网络层（epoll/kqueue）
-- 连接绑定线程模型，同一连接的操作串行执行
-- 时间轮定时器管理心跳和超时检测
+### 服务端 (fix_server)
+- FIX 4.0 会话层：Logon、Heartbeat、TestRequest、Logout、消息重传
+- 业务消息：NewOrderSingle (D)、OrderCancelRequest (F)、ExecutionReport (8)
+- 自定义消息：资金查询 (U1/U2)、持仓查询 (U3/U4)、账户推送 (U5)、持仓推送 (U6)、合约搜索 (U7/U8)
+- 行情驱动撮合引擎，支持限价单和市价单
+- 账户管理：资金、保证金、持仓盈亏计算
+- 风控检查：保证金、持仓限额、下单数量
+- SimNow 行情源集成（可选）
 
-## 局限
-
-- 仅实现会话层消息，没有业务消息（如 NewOrderSingle、ExecutionReport）
-- 没有消息持久化和重传机制
-- 没有加密支持
-- 单机部署，不支持集群
+### 客户端 (fix_client)
+- 终端 TUI 界面（基于 FTXUI）
+- 实时显示账户资金、持仓、订单
+- 合约搜索（支持模糊匹配）
+- 下单、撤单操作
+- 订单本地持久化
 
 ## 架构
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        应用层                                │
-│                  FixServer / Client                         │
+│                      应用层 (Application)                    │
+│         SimulationApp / ClientApp / TUI                     │
 ├─────────────────────────────────────────────────────────────┤
-│                        协议层                                │
-│         Session (状态机) + FixCodec + FrameDecoder          │
+│                      业务层 (Business)                       │
+│    MatchingEngine / AccountManager / PositionManager        │
+│    InstrumentManager / RiskManager                          │
 ├─────────────────────────────────────────────────────────────┤
-│                        网络层                                │
+│                      协议层 (Protocol)                       │
+│         Session (状态机) + SessionManager + FixCodec        │
+├─────────────────────────────────────────────────────────────┤
+│                      网络层 (Network)                        │
 │              Reactor + Connection + ThreadPool              │
 ├─────────────────────────────────────────────────────────────┤
-│                        基础设施                              │
-│                 TimingWheel + Config                        │
+│                      基础设施 (Infrastructure)               │
+│            TimingWheel + Config + Logger + Store            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## 线程模型
-
-```
-Reactor 线程                     工作线程池
-     │                              │
-     ├─ epoll_wait()                │
-     │                              │
-     ├─ fd=5 可读 ──────────────────> 线程 A (fd=5 绑定)
-     │                              │  ├─ read()
-     │                              │  ├─ 解析 FIX 消息
-     │                              │  └─ 状态机处理
-     │                              │
-     ├─ fd=8 可读 ──────────────────> 线程 B (fd=8 绑定)
-     │                              │
-     └─ 定时器触发 ─> tick() ───────> 派发心跳检查任务
-```
-
-Reactor 线程只负责检测 IO 事件，实际的读写和业务处理在工作线程中执行。每个连接绑定到固定的工作线程，避免锁竞争。
-
 ## 构建
+
+依赖：
+- C++17 编译器 (GCC 8+ / Clang 7+ / MSVC 2019+)
+- CMake 3.16+
+- SQLite3
+- Linux (epoll) 或 macOS (kqueue)
 
 ```bash
 mkdir build && cd build
 cmake ..
-make
+make -j4
 ```
 
 ## 运行
 
-启动服务端：
+### 服务端
+
 ```bash
-./fix_server [线程数] [端口]
-# 例如: ./fix_server 4 9000
+# 基本启动
+./fix_server
+
+# 指定端口和线程数
+./fix_server -p 9000 -t 4
+
+# 连接 SimNow 行情源
+./fix_server -s simnow.ini
+
+# 查看帮助
+./fix_server -h
 ```
 
-启动客户端：
+### 客户端
+
 ```bash
-./fix_client [服务器IP] [端口]
-# 例如: ./fix_client 127.0.0.1 9000
+# 连接服务端
+./fix_client -h 127.0.0.1 -p 9000 -u USER001
+
+# 查看帮助
+./fix_client --help
 ```
 
-客户端连接后会自动发送 Logon，输入 `logout` 可优雅断开。
+TUI 操作：
+- `Tab` - 切换焦点
+- `F5` / `R` - 刷新数据
+- `Q` - 退出
 
 ## 配置
 
-`config.ini` 包含服务端口、心跳间隔、时间轮参数等配置项，详见文件注释。
+### config.ini
+服务端配置，包含端口、心跳间隔、风控参数等。
 
-## 依赖
+### simnow.ini
+SimNow 行情源配置（可选），需要 SimNow 账号。
 
-- C++17
-- CMake 3.10+
-- Linux (epoll) 或 macOS (kqueue)
+```ini
+[ctp]
+broker_id = 9999
+user_id = YOUR_USER_ID
+password = YOUR_PASSWORD
+md_front = tcp://182.254.243.31:40011
+td_front = tcp://182.254.243.31:40001
+```
 
-第三方库（已包含在项目中）：
-- [moodycamel::ConcurrentQueue](https://github.com/cameron314/concurrentqueue) - 无锁队列
+## 测试
+
+```bash
+# 单元测试
+cd tests && mkdir build && cd build
+cmake .. && make
+./unit_tests
+
+# E2E 测试
+cd tests/e2e
+./test_trading.sh
+./test_open_close.sh
+```
+
+## 目录结构
+
+```
+├── include/           # 头文件
+│   ├── app/          # 应用层
+│   ├── base/         # 基础设施
+│   ├── core/         # 网络核心
+│   ├── fix/          # FIX 协议
+│   ├── market/       # 行情适配器
+│   └── storage/      # 存储
+├── src/              # 源文件
+│   ├── server/       # 服务端入口
+│   ├── client/       # 客户端 + TUI
+│   └── ...
+├── tests/            # 测试
+│   ├── unit/         # 单元测试
+│   └── e2e/          # 端到端测试
+└── third_party/      # 第三方库
+```
+
+## 局限
+
+- 仅支持单机部署
+- 无消息加密
+- 行情撮合为模拟逻辑，非真实交易所撮合规则
+- SimNow 行情源需要在交易时段使用
+
+

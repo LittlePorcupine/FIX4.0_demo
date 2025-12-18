@@ -41,6 +41,7 @@ enum class OrderEventType {
 struct OrderEvent {
     OrderEventType type;       ///< 事件类型
     SessionID sessionID;       ///< 来源会话标识
+    std::string userId;        ///< 用户ID（从 Session 提取的真实身份）
 
     /// 事件数据（根据 type 使用不同类型）
     /// - NEW_ORDER: Order
@@ -63,30 +64,37 @@ struct OrderEvent {
     /**
      * @brief 构造会话事件（登录/登出）
      */
-    OrderEvent(OrderEventType t, const SessionID& sid)
+    OrderEvent(OrderEventType t, const SessionID& sid, const std::string& uid = "")
         : type(t)
         , sessionID(sid)
+        , userId(uid)
         , data(std::monostate{})
     {}
 
     /**
      * @brief 构造新订单事件
+     * @param order 订单数据
+     * @param uid 用户ID（从 Session 提取）
      */
-    static OrderEvent newOrder(const Order& order) {
+    static OrderEvent newOrder(const Order& order, const std::string& uid) {
         OrderEvent event;
         event.type = OrderEventType::NEW_ORDER;
         event.sessionID = order.sessionID;
+        event.userId = uid;
         event.data = order;
         return event;
     }
 
     /**
      * @brief 构造撤单事件
+     * @param req 撤单请求
+     * @param uid 用户ID（从 Session 提取）
      */
-    static OrderEvent cancelRequest(const CancelRequest& req) {
+    static OrderEvent cancelRequest(const CancelRequest& req, const std::string& uid) {
         OrderEvent event;
         event.type = OrderEventType::CANCEL_REQUEST;
         event.sessionID = req.sessionID;
+        event.userId = uid;
         event.data = req;
         return event;
     }

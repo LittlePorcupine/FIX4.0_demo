@@ -27,6 +27,7 @@ tests/ctp_test/build/
 # CTP 流文件目录
 md_flow/
 ctp_md_flow/
+ctp_trader_flow/
 
 # SQLite 数据库文件
 *.db

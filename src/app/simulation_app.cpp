@@ -362,31 +362,29 @@ void SimulationApp::handleFill(const std::string& accountId, const ExecutionRepo
         position.instrumentId = report.symbol;
     }
     
-    // 判断开平标志
-    bool isClose = false;
+    // 计算可平仓数量和开仓数量
+    int64_t closeQty = 0;
+    int64_t openQty = report.lastShares;
+    
     if (report.side == OrderSide::BUY && position.shortPosition > 0) {
-        isClose = true;  // 买单平空
+        // 买单：优先平空仓
+        closeQty = std::min(report.lastShares, position.shortPosition);
+        openQty = report.lastShares - closeQty;
     } else if (report.side == OrderSide::SELL && position.longPosition > 0) {
-        isClose = true;  // 卖单平多
+        // 卖单：优先平多仓
+        closeQty = std::min(report.lastShares, position.longPosition);
+        openQty = report.lastShares - closeQty;
     }
     
-    if (isClose) {
-        // 平仓处理
+    // 1. 先处理平仓部分
+    if (closeQty > 0) {
         double closeProfit = positionManager_.closePosition(
             accountId, report.symbol, report.side,
-            report.lastShares, report.lastPx, instrument->volumeMultiple);
+            closeQty, report.lastPx, instrument->volumeMultiple);
         
         // 计算释放的保证金
-        double releasedMargin = 0.0;
-        if (report.side == OrderSide::BUY) {
-            // 平空头，释放空头保证金
-            releasedMargin = report.lastPx * report.lastShares * 
-                             instrument->volumeMultiple * instrument->marginRate;
-        } else {
-            // 平多头，释放多头保证金
-            releasedMargin = report.lastPx * report.lastShares * 
-                             instrument->volumeMultiple * instrument->marginRate;
-        }
+        double releasedMargin = report.lastPx * closeQty * 
+                                instrument->volumeMultiple * instrument->marginRate;
         
         // 释放占用保证金
         accountManager_.releaseMargin(accountId, releasedMargin);
@@ -396,12 +394,14 @@ void SimulationApp::handleFill(const std::string& accountId, const ExecutionRepo
         
         LOG() << "[SimulationApp] Close position: " << report.symbol
               << " side=" << static_cast<int>(report.side)
-              << " qty=" << report.lastShares
+              << " qty=" << closeQty
               << " price=" << report.lastPx
               << " profit=" << closeProfit;
-    } else {
-        // 开仓处理
-        double margin = instrument->calculateMargin(report.lastPx, report.lastShares);
+    }
+    
+    // 2. 再处理开仓部分
+    if (openQty > 0) {
+        double margin = instrument->calculateMargin(report.lastPx, openQty);
         
         // 获取冻结的保证金（使用原始总量计算，避免部分成交累计误差）
         double frozenMargin = 0.0;
@@ -410,7 +410,7 @@ void SimulationApp::handleFill(const std::string& accountId, const ExecutionRepo
             auto it = orderMarginInfoMap_.find(report.clOrdID);
             if (it != orderMarginInfoMap_.end()) {
                 // 使用原始总冻结保证金按比例计算，避免累计误差
-                frozenMargin = it->second.calculateReleaseAmount(report.lastShares);
+                frozenMargin = it->second.calculateReleaseAmount(openQty);
             }
         }
         
@@ -420,11 +420,11 @@ void SimulationApp::handleFill(const std::string& accountId, const ExecutionRepo
         // 开仓
         positionManager_.openPosition(
             accountId, report.symbol, report.side,
-            report.lastShares, report.lastPx, margin);
+            openQty, report.lastPx, margin);
         
         LOG() << "[SimulationApp] Open position: " << report.symbol
               << " side=" << static_cast<int>(report.side)
-              << " qty=" << report.lastShares
+              << " qty=" << openQty
               << " price=" << report.lastPx
               << " margin=" << margin
               << " frozenReleased=" << frozenMargin;
@@ -630,8 +630,8 @@ void SimulationApp::handleNewOrderSingle(const FixMessage& msg, const SessionID&
         orderAccountMap_[order.clOrdID] = userId;
     }
     
-    // 提交到撮合引擎
-    engine_.submit(OrderEvent::newOrder(order));
+    // 提交到撮合引擎（传入真实的用户ID）
+    engine_.submit(OrderEvent::newOrder(order, userId));
 }
 
 void SimulationApp::handleOrderCancelRequest(const FixMessage& msg, const SessionID& sessionID, const std::string& userId) {
@@ -654,7 +654,7 @@ void SimulationApp::handleOrderCancelRequest(const FixMessage& msg, const Sessio
         }
     }
     
-    engine_.submit(OrderEvent::cancelRequest(req));
+    engine_.submit(OrderEvent::cancelRequest(req, userId));
 }
 
 void SimulationApp::handleBalanceQuery(const FixMessage& msg, const SessionID& sessionID, const std::string& userId) {
@@ -814,6 +814,9 @@ void SimulationApp::onMarketDataUpdate(const std::string& instrumentId, double l
         
         // 推送账户更新给 Client（行情变化触发）
         pushAccountUpdate(accountId, 1);  // 1 = 行情变化
+        
+        // 同时推送持仓更新（包含最新盈亏）
+        pushPositionUpdate(accountId, instrumentId, 1);  // 1 = 行情变化
     }
 }
 

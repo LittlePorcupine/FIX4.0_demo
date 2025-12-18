@@ -382,6 +382,9 @@ private:
     /// 订单到会话的映射：clOrdID -> SessionID（用于成交通知）
     std::unordered_map<std::string, SessionID> orderSessionMap_;
 
+    /// 订单到用户ID的映射：clOrdID -> userId（用于持仓更新）
+    std::unordered_map<std::string, std::string> orderUserMap_;
+
     /// ExecutionReport 回调
     ExecutionReportCallback execReportCallback_;
 

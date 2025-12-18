@@ -140,10 +140,36 @@ if (UNIX)
 endif()
 
 
+# =============================================================================
+# FTXUI 依赖（用于 TUI 客户端）
+# =============================================================================
+include(FetchContent)
+FetchContent_Declare(
+    ftxui
+    GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
+    GIT_TAG v5.0.0
+)
+FetchContent_MakeAvailable(ftxui)
+
 # 添加客户端可执行文件
-add_executable(fix_client src/client/main.cpp src/client/client.cpp)
-# 链接 fix_engine 库到客户端
-target_link_libraries(fix_client PRIVATE fix_engine)
+add_executable(fix_client 
+    src/client/main.cpp 
+    src/client/client_app.cpp
+    src/client/client_state.cpp
+    src/client/tui/app.cpp
+    src/client/tui/components/header.cpp
+    src/client/tui/components/order_panel.cpp
+    src/client/tui/components/position_panel.cpp
+    src/client/tui/components/account_panel.cpp
+    src/client/tui/components/search_box.cpp
+)
+# 链接 fix_engine 库和 FTXUI 到客户端
+target_link_libraries(fix_client PRIVATE 
+    fix_engine 
+    ftxui::screen 
+    ftxui::dom 
+    ftxui::component
+)
 if (UNIX)
     target_link_libraries(fix_client PRIVATE Threads::Threads)
 endif()
