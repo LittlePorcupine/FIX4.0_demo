@@ -23,9 +23,6 @@
 namespace fix40 {
 
 // 前向声明
-class RiskManager;
-class AccountManager;
-class PositionManager;
 class InstrumentManager;
 
 /**
@@ -83,8 +80,8 @@ using MarketDataUpdateCallback = std::function<void(const std::string&, double)>
  * engine.stop();
  * @endcode
  */
-class MatchingEngine {
-public:
+	class MatchingEngine {
+	public:
     /**
      * @brief 构造撮合引擎
      */
@@ -201,30 +198,17 @@ public:
     size_t getTotalPendingOrderCount() const;
 
     // =========================================================================
-    // 管理器设置（用于集成风控和资金/持仓管理）
+    // 管理器设置（用于提供撮合所需的只读信息）
     // =========================================================================
-
-    /**
-     * @brief 设置风控管理器
-     * @param riskMgr 风控管理器指针
-     */
-    void setRiskManager(RiskManager* riskMgr) { riskManager_ = riskMgr; }
-
-    /**
-     * @brief 设置账户管理器
-     * @param accountMgr 账户管理器指针
-     */
-    void setAccountManager(AccountManager* accountMgr) { accountManager_ = accountMgr; }
-
-    /**
-     * @brief 设置持仓管理器
-     * @param positionMgr 持仓管理器指针
-     */
-    void setPositionManager(PositionManager* positionMgr) { positionManager_ = positionMgr; }
 
     /**
      * @brief 设置合约管理器
      * @param instrumentMgr 合约管理器指针
+     *
+     * 撮合引擎会在行情更新时更新合约的涨跌停等信息。
+     *
+     * @note 账户/持仓/风控等业务权威逻辑由上层 Application（如 SimulationApp）负责，
+     * 撮合引擎只负责撮合与订单状态推进。
      */
     void setInstrumentManager(InstrumentManager* instrumentMgr) { instrumentManager_ = instrumentMgr; }
 
@@ -271,9 +255,8 @@ private:
      * @param event 订单事件
      *
      * 流程：
-     * 1. 风控检查（如果设置了RiskManager）
-     * 2. 尝试立即撮合（与当前行情比对）
-     * 3. 未成交部分挂入虚拟订单簿等待行情触发
+     * 1. 尝试立即撮合（与当前行情比对）
+     * 2. 未成交部分挂入虚拟订单簿等待行情触发
      */
     void handle_new_order(const OrderEvent& event);
 
@@ -379,11 +362,11 @@ private:
     /// 订单簿映射：symbol -> OrderBook（保留用于兼容）
     std::unordered_map<std::string, std::unique_ptr<OrderBook>> orderBooks_;
 
-    /// 订单到会话的映射：clOrdID -> SessionID（用于成交通知）
-    std::unordered_map<std::string, SessionID> orderSessionMap_;
+	    /// 订单到会话的映射：clOrdID -> SessionID（用于成交通知）
+	    std::unordered_map<std::string, SessionID> orderSessionMap_;
 
-    /// 订单到用户ID的映射：clOrdID -> userId（用于持仓更新）
-    std::unordered_map<std::string, std::string> orderUserMap_;
+	    /// 订单到用户ID的映射：clOrdID -> userId（用于日志/追踪，业务处理由上层负责）
+	    std::unordered_map<std::string, std::string> orderUserMap_;
 
     /// ExecutionReport 回调
     ExecutionReportCallback execReportCallback_;
@@ -408,16 +391,13 @@ private:
     std::unordered_map<std::string, std::list<Order>> pendingOrders_;
 
     /// 行情数据队列（无锁阻塞队列）
-    moodycamel::BlockingConcurrentQueue<MarketData> marketDataQueue_;
+	    moodycamel::BlockingConcurrentQueue<MarketData> marketDataQueue_;
 
-    // =========================================================================
-    // 管理器指针（用于集成风控和资金/持仓管理）
-    // =========================================================================
+	    // =========================================================================
+	    // 管理器指针（用于提供撮合所需的只读信息）
+	    // =========================================================================
 
-    RiskManager* riskManager_ = nullptr;           ///< 风控管理器
-    AccountManager* accountManager_ = nullptr;     ///< 账户管理器
-    PositionManager* positionManager_ = nullptr;   ///< 持仓管理器
-    InstrumentManager* instrumentManager_ = nullptr; ///< 合约管理器
-};
+	    InstrumentManager* instrumentManager_ = nullptr; ///< 合约管理器
+	};
 
 } // namespace fix40
