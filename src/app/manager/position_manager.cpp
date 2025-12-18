@@ -19,7 +19,19 @@ PositionManager::PositionManager()
 
 PositionManager::PositionManager(IStore* store)
     : store_(store)
-{}
+{
+    if (store_) {
+        // 启动时从存储恢复持仓状态（用于服务端重启后持仓连续性）。
+        auto positions = store_->loadAllPositions();
+        std::lock_guard<std::mutex> lock(mutex_);
+        positions_.clear();
+        for (const auto& position : positions) {
+            if (!position.accountId.empty() && !position.instrumentId.empty()) {
+                positions_[makeKey(position.accountId, position.instrumentId)] = position;
+            }
+        }
+    }
+}
 
 // =============================================================================
 // 查询方法
@@ -259,12 +271,10 @@ std::string PositionManager::makeKey(const std::string& accountId,
     return accountId + "_" + instrumentId;
 }
 
-void PositionManager::persistPosition(const Position& /*position*/) {
-    // TODO: 实现持久化逻辑
-    // 当IStore接口扩展后，在此处调用store_->savePosition(position)
-    // if (store_) {
-    //     store_->savePosition(position);
-    // }
+void PositionManager::persistPosition(const Position& position) {
+    if (!store_) return;
+    // 注意：此处为 best-effort 持久化。存储失败时不抛异常，以免影响撮合主流程。
+    store_->savePosition(position);
 }
 
 } // namespace fix40
