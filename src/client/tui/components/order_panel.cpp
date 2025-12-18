@@ -125,10 +125,25 @@ Component OrderPanelComponent(
         
         double price = 0.0;
         if (ordType == "2" && !panelState->price.empty()) {
-            price = std::stod(panelState->price);
+            try {
+                price = std::stod(panelState->price);
+            } catch (...) {
+                state->setLastError("价格格式错误");
+                return;
+            }
         }
         
-        int64_t qty = std::stoll(panelState->quantity);
+        int64_t qty = 0;
+        try {
+            qty = std::stoll(panelState->quantity);
+            if (qty <= 0) {
+                state->setLastError("数量必须大于0");
+                return;
+            }
+        } catch (...) {
+            state->setLastError("数量格式错误");
+            return;
+        }
         
         app->sendNewOrder(panelState->symbol, side, qty, price, ordType);
     });

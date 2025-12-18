@@ -216,19 +216,23 @@ void ClientState::loadOrders(const std::string& filepath) {
         
         // 至少需要 9 个字段（到 state）
         if (fields.size() >= 9) {
-            OrderInfo order;
-            order.clOrdID = fields[0];
-            order.orderId = fields[1];
-            order.symbol = fields[2];
-            order.side = fields[3];
-            order.price = std::stod(fields[4]);
-            order.orderQty = std::stoll(fields[5]);
-            order.filledQty = std::stoll(fields[6]);
-            order.avgPx = std::stod(fields[7]);
-            order.state = static_cast<OrderState>(std::stoi(fields[8]));
-            if (fields.size() > 9) order.text = fields[9];
-            if (fields.size() > 10) order.updateTime = fields[10];
-            orders_[order.clOrdID] = order;
+            try {
+                OrderInfo order;
+                order.clOrdID = fields[0];
+                order.orderId = fields[1];
+                order.symbol = fields[2];
+                order.side = fields[3];
+                order.price = std::stod(fields[4]);
+                order.orderQty = std::stoll(fields[5]);
+                order.filledQty = std::stoll(fields[6]);
+                order.avgPx = std::stod(fields[7]);
+                order.state = static_cast<OrderState>(std::stoi(fields[8]));
+                if (fields.size() > 9) order.text = fields[9];
+                if (fields.size() > 10) order.updateTime = fields[10];
+                orders_[order.clOrdID] = order;
+            } catch (...) {
+                // 解析失败，跳过该条目
+            }
         }
     }
 }

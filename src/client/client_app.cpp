@@ -209,16 +209,24 @@ void ClientApp::handleExecutionReport(const FixMessage& msg) {
         order.side = (msg.get_string(tags::Side) == "1") ? "BUY" : "SELL";
     }
     if (msg.has(tags::Price)) {
-        order.price = std::stod(msg.get_string(tags::Price));
+        try {
+            order.price = std::stod(msg.get_string(tags::Price));
+        } catch (...) { order.price = 0.0; }
     }
     if (msg.has(tags::OrderQty)) {
-        order.orderQty = std::stoll(msg.get_string(tags::OrderQty));
+        try {
+            order.orderQty = std::stoll(msg.get_string(tags::OrderQty));
+        } catch (...) { order.orderQty = 0; }
     }
     if (msg.has(tags::CumQty)) {
-        order.filledQty = std::stoll(msg.get_string(tags::CumQty));
+        try {
+            order.filledQty = std::stoll(msg.get_string(tags::CumQty));
+        } catch (...) { order.filledQty = 0; }
     }
     if (msg.has(tags::AvgPx)) {
-        order.avgPx = std::stod(msg.get_string(tags::AvgPx));
+        try {
+            order.avgPx = std::stod(msg.get_string(tags::AvgPx));
+        } catch (...) { order.avgPx = 0.0; }
     }
     if (msg.has(tags::Text)) {
         order.text = msg.get_string(tags::Text);
@@ -265,29 +273,33 @@ void ClientApp::handleExecutionReport(const FixMessage& msg) {
 void ClientApp::handleBalanceResponse(const FixMessage& msg) {
     AccountInfo info;
     
+    auto safeStod = [](const std::string& s) -> double {
+        try { return std::stod(s); } catch (...) { return 0.0; }
+    };
+    
     if (msg.has(tags::Balance)) {
-        info.balance = std::stod(msg.get_string(tags::Balance));
+        info.balance = safeStod(msg.get_string(tags::Balance));
     }
     if (msg.has(tags::Available)) {
-        info.available = std::stod(msg.get_string(tags::Available));
+        info.available = safeStod(msg.get_string(tags::Available));
     }
     if (msg.has(tags::FrozenMargin)) {
-        info.frozenMargin = std::stod(msg.get_string(tags::FrozenMargin));
+        info.frozenMargin = safeStod(msg.get_string(tags::FrozenMargin));
     }
     if (msg.has(tags::UsedMargin)) {
-        info.usedMargin = std::stod(msg.get_string(tags::UsedMargin));
+        info.usedMargin = safeStod(msg.get_string(tags::UsedMargin));
     }
     if (msg.has(tags::PositionProfit)) {
-        info.positionProfit = std::stod(msg.get_string(tags::PositionProfit));
+        info.positionProfit = safeStod(msg.get_string(tags::PositionProfit));
     }
     if (msg.has(tags::CloseProfit)) {
-        info.closeProfit = std::stod(msg.get_string(tags::CloseProfit));
+        info.closeProfit = safeStod(msg.get_string(tags::CloseProfit));
     }
     if (msg.has(tags::DynamicEquity)) {
-        info.dynamicEquity = std::stod(msg.get_string(tags::DynamicEquity));
+        info.dynamicEquity = safeStod(msg.get_string(tags::DynamicEquity));
     }
     if (msg.has(tags::RiskRatio)) {
-        info.riskRatio = std::stod(msg.get_string(tags::RiskRatio));
+        info.riskRatio = safeStod(msg.get_string(tags::RiskRatio));
     }
     
     state_->updateAccount(info);
@@ -325,15 +337,19 @@ void ClientApp::handlePositionResponse(const FixMessage& msg) {
             auto atPos = part.find('@');
             if (atPos == std::string::npos) continue;
             
-            int64_t qty = std::stoll(part.substr(1, atPos - 1));
-            double price = std::stod(part.substr(atPos + 1));
-            
-            if (dir == 'L') {
-                pos.longPosition = qty;
-                pos.longAvgPrice = price;
-            } else if (dir == 'S') {
-                pos.shortPosition = qty;
-                pos.shortAvgPrice = price;
+            try {
+                int64_t qty = std::stoll(part.substr(1, atPos - 1));
+                double price = std::stod(part.substr(atPos + 1));
+                
+                if (dir == 'L') {
+                    pos.longPosition = qty;
+                    pos.longAvgPrice = price;
+                } else if (dir == 'S') {
+                    pos.shortPosition = qty;
+                    pos.shortAvgPrice = price;
+                }
+            } catch (...) {
+                // 解析失败，跳过该字段
             }
         }
         
@@ -349,29 +365,33 @@ void ClientApp::handleAccountUpdate(const FixMessage& msg) {
     // 与 handleBalanceResponse 相同，但不触发额外的查询
     AccountInfo info;
     
+    auto safeStod = [](const std::string& s) -> double {
+        try { return std::stod(s); } catch (...) { return 0.0; }
+    };
+    
     if (msg.has(tags::Balance)) {
-        info.balance = std::stod(msg.get_string(tags::Balance));
+        info.balance = safeStod(msg.get_string(tags::Balance));
     }
     if (msg.has(tags::Available)) {
-        info.available = std::stod(msg.get_string(tags::Available));
+        info.available = safeStod(msg.get_string(tags::Available));
     }
     if (msg.has(tags::FrozenMargin)) {
-        info.frozenMargin = std::stod(msg.get_string(tags::FrozenMargin));
+        info.frozenMargin = safeStod(msg.get_string(tags::FrozenMargin));
     }
     if (msg.has(tags::UsedMargin)) {
-        info.usedMargin = std::stod(msg.get_string(tags::UsedMargin));
+        info.usedMargin = safeStod(msg.get_string(tags::UsedMargin));
     }
     if (msg.has(tags::PositionProfit)) {
-        info.positionProfit = std::stod(msg.get_string(tags::PositionProfit));
+        info.positionProfit = safeStod(msg.get_string(tags::PositionProfit));
     }
     if (msg.has(tags::CloseProfit)) {
-        info.closeProfit = std::stod(msg.get_string(tags::CloseProfit));
+        info.closeProfit = safeStod(msg.get_string(tags::CloseProfit));
     }
     if (msg.has(tags::DynamicEquity)) {
-        info.dynamicEquity = std::stod(msg.get_string(tags::DynamicEquity));
+        info.dynamicEquity = safeStod(msg.get_string(tags::DynamicEquity));
     }
     if (msg.has(tags::RiskRatio)) {
-        info.riskRatio = std::stod(msg.get_string(tags::RiskRatio));
+        info.riskRatio = safeStod(msg.get_string(tags::RiskRatio));
     }
     
     state_->updateAccount(info);
@@ -380,6 +400,10 @@ void ClientApp::handleAccountUpdate(const FixMessage& msg) {
 void ClientApp::handlePositionUpdate(const FixMessage& msg) {
     PositionInfo pos;
     
+    auto safeStod = [](const std::string& s) -> double {
+        try { return std::stod(s); } catch (...) { return 0.0; }
+    };
+    
     if (msg.has(tags::InstrumentID)) {
         pos.instrumentId = msg.get_string(tags::InstrumentID);
     }
@@ -387,16 +411,16 @@ void ClientApp::handlePositionUpdate(const FixMessage& msg) {
         pos.longPosition = msg.get_int(tags::LongPosition);
     }
     if (msg.has(tags::LongAvgPrice)) {
-        pos.longAvgPrice = std::stod(msg.get_string(tags::LongAvgPrice));
+        pos.longAvgPrice = safeStod(msg.get_string(tags::LongAvgPrice));
     }
     if (msg.has(tags::ShortPosition)) {
         pos.shortPosition = msg.get_int(tags::ShortPosition);
     }
     if (msg.has(tags::ShortAvgPrice)) {
-        pos.shortAvgPrice = std::stod(msg.get_string(tags::ShortAvgPrice));
+        pos.shortAvgPrice = safeStod(msg.get_string(tags::ShortAvgPrice));
     }
     if (msg.has(tags::PositionProfit)) {
-        pos.profit = std::stod(msg.get_string(tags::PositionProfit));
+        pos.profit = safeStod(msg.get_string(tags::PositionProfit));
     }
     
     state_->updatePosition(pos);

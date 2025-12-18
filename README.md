@@ -102,8 +102,8 @@ SimNow 行情源配置（可选），需要 SimNow 账号。
 broker_id = 9999
 user_id = YOUR_USER_ID
 password = YOUR_PASSWORD
-md_front = tcp://180.168.146.187:10131
-trader_front = tcp://180.168.146.187:10130
+md_front = tcp://182.254.243.31:40011
+td_front = tcp://182.254.243.31:40001
 ```
 
 ## 测试
@@ -147,6 +147,4 @@ cd tests/e2e
 - 行情撮合为模拟逻辑，非真实交易所撮合规则
 - SimNow 行情源需要在交易时段使用
 
-## 协议
 
-MIT License
