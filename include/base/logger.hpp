@@ -40,6 +40,22 @@ public:
     }
 
     /**
+     * @brief 启用或禁用日志输出
+     * @param enabled true 启用，false 禁用
+     */
+    void setEnabled(bool enabled) {
+        enabled_ = enabled;
+    }
+
+    /**
+     * @brief 检查日志是否启用
+     * @return bool 是否启用
+     */
+    bool isEnabled() const {
+        return enabled_;
+    }
+
+    /**
      * @class LogStream
      * @brief 日志流对象，支持流式输出
      *
@@ -51,8 +67,9 @@ public:
         /**
          * @brief 构造日志流
          * @param mtx 用于保护输出的互斥锁引用
+         * @param enabled 是否启用输出
          */
-        LogStream(std::mutex& mtx) : mtx_(mtx) {}
+        LogStream(std::mutex& mtx, bool enabled) : mtx_(mtx), enabled_(enabled) {}
         
         /**
          * @brief 析构时输出日志
@@ -60,6 +77,7 @@ public:
          * 自动添加换行符，并使用 write() 系统调用原子性写入。
          */
         ~LogStream() {
+            if (!enabled_) return;
             buffer_ << '\n';
             std::string str = buffer_.str();
             std::lock_guard<std::mutex> lock(mtx_);
@@ -75,7 +93,7 @@ public:
          * @param other 源对象
          */
         LogStream(LogStream&& other) noexcept 
-            : mtx_(other.mtx_), buffer_(std::move(other.buffer_)) {}
+            : mtx_(other.mtx_), enabled_(other.enabled_), buffer_(std::move(other.buffer_)) {}
 
         /**
          * @brief 流式输出操作符
@@ -85,12 +103,15 @@ public:
          */
         template<typename T>
         LogStream& operator<<(const T& value) {
-            buffer_ << value;
+            if (enabled_) {
+                buffer_ << value;
+            }
             return *this;
         }
 
     private:
         std::mutex& mtx_;           ///< 互斥锁引用
+        bool enabled_;              ///< 是否启用输出
         std::ostringstream buffer_; ///< 日志缓冲区
     };
 
@@ -99,12 +120,13 @@ public:
      * @return LogStream 日志流对象
      */
     LogStream log() {
-        return LogStream(mutex_);
+        return LogStream(mutex_, enabled_);
     }
 
 private:
     Logger() = default;
-    std::mutex mutex_; ///< 保护日志输出的互斥锁
+    std::mutex mutex_;          ///< 保护日志输出的互斥锁
+    bool enabled_ = true;       ///< 日志开关
 };
 
 /**

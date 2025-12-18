@@ -91,6 +91,8 @@ add_executable(unit_tests
     unit/test_position_manager.cpp
     unit/test_risk_manager.cpp
     unit/test_matching_engine.cpp
+    unit/test_open_close_position.cpp
+    unit/test_client_state.cpp
 )
 
 target_link_libraries(unit_tests PRIVATE fix_engine_test)
