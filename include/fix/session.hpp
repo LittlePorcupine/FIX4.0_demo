@@ -312,7 +312,7 @@ public:
 	     */
 	    void changeState(std::unique_ptr<IStateHandler> newState);
 
-	    std::string senderCompID;  ///< 发送方 CompID
+	    const std::string senderCompID;  ///< 发送方 CompID
 	    std::string targetCompID;  ///< 接收方 CompID（服务端可在 Logon 后更新为真实客户端 CompID）
 	    FixCodec codec_;                 ///< FIX 编解码器
 

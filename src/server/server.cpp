@@ -164,35 +164,35 @@ void FixServer::on_new_connection(int fd) {
     LOG() << "Accepted new connection with fd: " << fd 
           << ", bound to thread " << thread_index;
 
-	    auto on_conn_close = [this, fd, thread_index]() {
-	        // 使用 enqueue_to 确保关闭操作在连接绑定的线程中执行，
-	        // 避免与该连接的其他操作（handle_read/handle_write）产生竞态
-	        worker_pool_->enqueue_to(thread_index, [this, fd] {
-	            this->on_connection_close(fd);
-	        });
-	    };
+    auto on_conn_close = [this, fd, thread_index]() {
+        // 使用 enqueue_to 确保关闭操作在连接绑定的线程中执行，
+        // 避免与该连接的其他操作（handle_read/handle_write）产生竞态
+        worker_pool_->enqueue_to(thread_index, [this, fd] {
+            this->on_connection_close(fd);
+        });
+    };
 
-	    // 创建 session 和 connection，传入线程池和绑定的线程索引
-	    // 服务端在收到客户端 Logon 之前并不知道真实的客户端 CompID，
-	    // 先用占位符初始化 TargetCompID，待 Logon 解析后再更新。
-	    auto session = std::make_shared<Session>("SERVER", "PENDING", 30, on_conn_close);
-	    auto connection = std::make_shared<Connection>(
-	        fd, reactor_.get(), session,
-	        worker_pool_.get(), thread_index
-	    );
-	    session->set_connection(connection);
-	    
-	    // 设置应用层处理器
-	    if (application_) {
-	        session->set_application(application_);
-	        
-	        // 如果是 SimulationApp：在 Logon 完成后再注册 Session（避免多客户端 SessionID 冲突）
-	        if (auto* simApp = dynamic_cast<SimulationApp*>(application_)) {
-	            session->set_established_callback([simApp](std::shared_ptr<Session> established) {
-	                simApp->getSessionManager().registerSession(std::move(established));
-	            });
-	        }
-	    }
+    // 创建 session 和 connection，传入线程池和绑定的线程索引
+    // 服务端在收到客户端 Logon 之前并不知道真实的客户端 CompID，
+    // 先用占位符初始化 TargetCompID，待 Logon 解析后再更新。
+    auto session = std::make_shared<Session>("SERVER", "PENDING", 30, on_conn_close);
+    auto connection = std::make_shared<Connection>(
+        fd, reactor_.get(), session,
+        worker_pool_.get(), thread_index
+    );
+    session->set_connection(connection);
+
+    // 设置应用层处理器
+    if (application_) {
+        session->set_application(application_);
+
+        // 如果是 SimulationApp：在 Logon 完成后再注册 Session（避免多客户端 SessionID 冲突）
+        if (auto* simApp = dynamic_cast<SimulationApp*>(application_)) {
+            session->set_established_callback([simApp](std::shared_ptr<Session> established) {
+                simApp->getSessionManager().registerSession(std::move(established));
+            });
+        }
+    }
 
     {
         std::lock_guard<std::mutex> lock(connections_mutex_);

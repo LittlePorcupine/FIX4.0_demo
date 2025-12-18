@@ -180,10 +180,15 @@ void Session::set_established_callback(EstablishedCallback cb) {
 }
 
 void Session::notify_established() {
+    // Fast path：多数情况下 notify 只会调用一次；若已触发过则直接返回，避免进入锁竞争。
+    if (established_notified_.load(std::memory_order_acquire)) {
+        return;
+    }
+
     EstablishedCallback cb;
     {
         std::lock_guard<std::recursive_mutex> lock(state_mutex_);
-        if (established_notified_.exchange(true)) {
+        if (established_notified_.exchange(true, std::memory_order_acq_rel)) {
             return;
         }
         cb = established_callback_;
@@ -497,7 +502,9 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
                 context.send(logon_ack);
                 context.changeState(std::make_unique<EstablishedState>());
 
-                // 会话已建立：先触发回调（例如注册 SessionManager），再通知应用层
+                // 会话已建立：在同一调用栈中同步执行“先回调、再通知应用层”的顺序。
+                // 这样做的目的，是确保应用层收到 onLogon 事件之前，SessionManager 已完成注册，
+                // 从而避免应用层在 onLogon 内部查找会话时出现“找不到 session”的竞态问题。
                 context.notify_established();
                 
                 // 通知应用层会话已建立
@@ -548,7 +555,8 @@ void LogonSentState::onMessageReceived(Session& context, const FixMessage& msg) 
         LOG() << "Logon confirmation received. Session established.";
         context.changeState(std::make_unique<EstablishedState>());
 
-        // 会话已建立：先触发回调，再通知应用层
+        // 会话已建立：在同一调用栈中同步执行“先回调、再通知应用层”的顺序。
+        // 这样做的目的，是确保应用层收到 onLogon 事件之前，SessionManager 已完成注册。
         context.notify_established();
         
         // 通知应用层会话已建立
