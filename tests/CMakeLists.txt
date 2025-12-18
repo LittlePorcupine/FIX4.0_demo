@@ -81,6 +81,7 @@ add_executable(unit_tests
     unit/test_order_book.cpp
     unit/test_session_manager.cpp
     unit/test_sqlite_store.cpp
+    unit/test_simulation_app_persistence.cpp
     # RapidCheck 属性测试
     unit/test_rapidcheck_integration.cpp
     unit/test_account.cpp

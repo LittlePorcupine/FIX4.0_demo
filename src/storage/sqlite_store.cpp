@@ -272,7 +272,13 @@ bool SqliteStore::updateOrder(const Order& order) {
     if (!db_) return false;
     
     const char* sql = R"(
-        UPDATE orders SET cum_qty = ?, leaves_qty = ?, avg_px = ?, status = ?, update_time = ?
+        UPDATE orders SET
+            order_id = COALESCE(NULLIF(?, ''), order_id),
+            cum_qty = ?,
+            leaves_qty = ?,
+            avg_px = ?,
+            status = ?,
+            update_time = ?
         WHERE cl_ord_id = ?
     )";
 
@@ -285,12 +291,13 @@ bool SqliteStore::updateOrder(const Order& order) {
     auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
 
-    sqlite3_bind_int64(stmt, 1, order.cumQty);
-    sqlite3_bind_int64(stmt, 2, order.leavesQty);
-    sqlite3_bind_double(stmt, 3, order.avgPx);
-    sqlite3_bind_int(stmt, 4, static_cast<int>(order.status));
-    sqlite3_bind_int64(stmt, 5, now);
-    sqlite3_bind_text(stmt, 6, order.clOrdID.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 1, order.orderID.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 2, order.cumQty);
+    sqlite3_bind_int64(stmt, 3, order.leavesQty);
+    sqlite3_bind_double(stmt, 4, order.avgPx);
+    sqlite3_bind_int(stmt, 5, static_cast<int>(order.status));
+    sqlite3_bind_int64(stmt, 6, now);
+    sqlite3_bind_text(stmt, 7, order.clOrdID.c_str(), -1, SQLITE_TRANSIENT);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);

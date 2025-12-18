@@ -30,6 +30,13 @@ namespace fix40 {
 namespace {
 
 /**
+ * @brief 将系统时间转换为 epoch 毫秒时间戳
+ */
+int64_t to_epoch_millis(std::chrono::system_clock::time_point tp) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count();
+}
+
+/**
  * @brief 解析结果
  */
 struct ParseResult {
@@ -292,6 +299,46 @@ void SimulationApp::onExecutionReport(const SessionID& sessionID, const Executio
     LOG() << "[SimulationApp] Sending ExecutionReport to " << sessionID.to_string()
           << " ClOrdID=" << report.clOrdID
           << " OrdStatus=" << static_cast<int>(report.ordStatus);
+
+    // =========================================================================
+    // 订单/成交持久化（Best effort）
+    // =========================================================================
+    // 说明：
+    // - Order 在 NewOrderSingle 收到时已写入 orders 表（PENDING_NEW）；
+    // - 此处根据 ExecutionReport 更新订单状态，并在发生成交时写入 trades 表；
+    // - 持久化失败不应影响撮合/回报链路，因此仅记录日志，不中断处理。
+    if (store_ && !report.clOrdID.empty()) {
+        Order orderUpdate;
+        orderUpdate.clOrdID = report.clOrdID;
+        orderUpdate.orderID = report.orderID;
+        orderUpdate.cumQty = report.cumQty;
+        orderUpdate.leavesQty = report.leavesQty;
+        orderUpdate.avgPx = report.avgPx;
+        orderUpdate.status = report.ordStatus;
+
+        if (!store_->updateOrder(orderUpdate)) {
+            LOG() << "[SimulationApp] Warning: Failed to persist order update: ClOrdID="
+                  << report.clOrdID;
+        }
+
+        // 成交（每次 fill 一条记录）
+        if (report.lastShares > 0 && !report.execID.empty()) {
+            StoredTrade trade;
+            trade.tradeId = report.execID;
+            trade.clOrdID = report.clOrdID;
+            trade.symbol = report.symbol;
+            trade.side = report.side;
+            trade.price = report.lastPx;
+            trade.quantity = report.lastShares;
+            trade.timestamp = to_epoch_millis(report.transactTime);
+            trade.counterpartyOrderId = "";
+
+            if (!store_->saveTrade(trade)) {
+                LOG() << "[SimulationApp] Warning: Failed to persist trade: ExecID="
+                      << report.execID << " ClOrdID=" << report.clOrdID;
+            }
+        }
+    }
     
     // 获取账户ID
     std::string accountId;
@@ -511,6 +558,18 @@ void SimulationApp::handleNewOrderSingle(const FixMessage& msg, const SessionID&
     }
     
     Order& order = result.order;
+
+    // =========================================================================
+    // 订单持久化（Best effort）
+    // =========================================================================
+    // 将订单的初始状态写入存储（通常为 PENDING_NEW）。
+    // 后续状态变化由 onExecutionReport() 驱动 updateOrder() 完成。
+    if (store_) {
+        if (!store_->saveOrder(order)) {
+            LOG() << "[SimulationApp] Warning: Failed to persist new order: ClOrdID="
+                  << order.clOrdID;
+        }
+    }
     
     // 关键：使用从 Session 提取的 userId，而非消息体中的 Account 字段
     // 这是安全路由的核心 - 防止用户伪造账户ID
