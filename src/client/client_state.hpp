@@ -15,6 +15,7 @@
 #include <functional>
 #include <unordered_map>
 #include <filesystem>
+#include <chrono>
 
 namespace fix40::client {
 
@@ -188,6 +189,8 @@ private:
     
     // 订单信息
     std::unordered_map<std::string, OrderInfo> orders_;
+    // 订单插入顺序（用于稳定展示顺序/保存顺序）
+    std::vector<std::string> orderSequence_;
     
     // 合约搜索结果
     std::vector<std::string> searchResults_;

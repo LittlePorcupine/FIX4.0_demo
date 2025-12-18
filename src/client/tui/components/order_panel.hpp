@@ -15,9 +15,20 @@
 namespace fix40::client::tui {
 
 /**
+ * @brief 订单列表状态
+ */
+struct OrderListState {
+    int selectedIndex = 0;
+    std::string selectedClOrdID;
+    size_t lastOrderCount = 0;
+};
+
+/**
  * @brief 创建订单列表组件
  */
-ftxui::Element OrderListComponent(const std::shared_ptr<ClientState>& state);
+ftxui::Component OrderListComponent(
+    std::shared_ptr<OrderListState> listState,
+    const std::shared_ptr<ClientState>& state);
 
 /**
  * @brief 下单面板状态
