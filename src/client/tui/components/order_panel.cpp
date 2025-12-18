@@ -50,11 +50,17 @@ Component OrderListComponent(
         }
 
         if (!listState->selectedClOrdID.empty()) {
+            bool found = false;
             for (int i = 0; i < count; ++i) {
                 if (view[i].clOrdID == listState->selectedClOrdID) {
                     listState->selectedIndex = i;
+                    found = true;
                     break;
                 }
+            }
+            // 方案 A：若旧选中订单已不存在，回到顶部（最新订单）。
+            if (!found) {
+                listState->selectedIndex = 0;
             }
         }
         listState->selectedIndex = clampIndex(listState->selectedIndex, count);
