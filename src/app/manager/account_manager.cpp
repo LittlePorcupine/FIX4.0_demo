@@ -19,7 +19,20 @@ AccountManager::AccountManager()
 
 AccountManager::AccountManager(IStore* store)
     : store_(store)
-{}
+{
+    if (store_) {
+        // 启动时从存储恢复账户状态（用于服务端重启后资金连续性）。
+        // 若存储不可用/为空，则保持内存态为空，由后续登录自动开户。
+        auto accounts = store_->loadAllAccounts();
+        std::lock_guard<std::mutex> lock(mutex_);
+        accounts_.clear();
+        for (const auto& account : accounts) {
+            if (!account.accountId.empty()) {
+                accounts_[account.accountId] = account;
+            }
+        }
+    }
+}
 
 // =============================================================================
 // 账户管理
@@ -239,12 +252,10 @@ void AccountManager::clear() {
 // 私有方法
 // =============================================================================
 
-void AccountManager::persistAccount(const Account& /*account*/) {
-    // TODO: 实现持久化逻辑
-    // 当IStore接口扩展后，在此处调用store_->saveAccount(account)
-    // if (store_) {
-    //     store_->saveAccount(account);
-    // }
+void AccountManager::persistAccount(const Account& account) {
+    if (!store_) return;
+    // 注意：此处为 best-effort 持久化。存储失败时不抛异常，以免影响撮合主流程。
+    store_->saveAccount(account);
 }
 
 } // namespace fix40

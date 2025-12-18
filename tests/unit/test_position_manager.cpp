@@ -9,6 +9,7 @@
 #include <rapidcheck.h>
 #include <rapidcheck/catch.h>
 #include "app/manager/position_manager.hpp"
+#include "storage/sqlite_store.hpp"
 #include <cmath>
 
 using namespace fix40;
@@ -22,6 +23,52 @@ TEST_CASE("PositionManager 默认构造", "[position_manager][unit]") {
     
     REQUIRE(mgr.size() == 0);
     REQUIRE(mgr.getAllPositions().empty());
+}
+
+TEST_CASE("PositionManager 使用 Store 时会加载并持久化持仓", "[position_manager][persistence]") {
+    SqliteStore store(":memory:");
+
+    SECTION("构造时从 Store 恢复持仓") {
+        Position seed("seed", "IF2601");
+        seed.longPosition = 2;
+        seed.longAvgPrice = 4000.0;
+        seed.longMargin = 240000.0;
+        seed.shortPosition = 1;
+        seed.shortAvgPrice = 4100.0;
+        seed.shortMargin = 123000.0;
+
+        REQUIRE(store.savePosition(seed));
+
+        PositionManager mgr(&store);
+        auto loaded = mgr.getPosition("seed", "IF2601");
+        REQUIRE(loaded.has_value());
+        REQUIRE(*loaded == seed);
+    }
+
+    SECTION("持仓变更会写入 Store") {
+        PositionManager mgr(&store);
+        mgr.openPosition("user001", "IF2601", OrderSide::BUY, 2, 4000.0, 240000.0);
+
+        auto from_store = store.loadPosition("user001", "IF2601");
+        REQUIRE(from_store.has_value());
+
+        auto in_mem = mgr.getPosition("user001", "IF2601");
+        REQUIRE(in_mem.has_value());
+        REQUIRE(*from_store == *in_mem);
+    }
+
+    SECTION("新实例可从同一 Store 读取最新状态") {
+        {
+            PositionManager mgr(&store);
+            mgr.openPosition("user002", "IF2601", OrderSide::SELL, 3, 4100.0, 369000.0);
+        }
+
+        PositionManager restored(&store);
+        auto pos = restored.getPosition("user002", "IF2601");
+        REQUIRE(pos.has_value());
+        REQUIRE(pos->shortPosition == 3);
+        REQUIRE(pos->shortAvgPrice == Approx(4100.0));
+    }
 }
 
 TEST_CASE("PositionManager openPosition 多头开仓", "[position_manager][unit]") {

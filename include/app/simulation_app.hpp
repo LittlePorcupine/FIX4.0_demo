@@ -202,6 +202,14 @@ public:
      */
     SessionManager& getSessionManager() { return sessionManager_; }
 
+    /**
+     * @brief 获取存储接口
+     * @return IStore* 存储接口指针，可能为 nullptr
+     *
+     * 该指针用于账户/持仓等数据的持久化与重启恢复。
+     */
+    IStore* getStore() const { return store_; }
+
     // =========================================================================
     // 管理器访问接口
     // =========================================================================

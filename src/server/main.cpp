@@ -15,6 +15,7 @@
 #include "base/logger.hpp"
 #include "app/simulation_app.hpp"
 #include "app/model/instrument.hpp"
+#include "storage/sqlite_store.hpp"
 #include <iostream>
 #include <csignal>
 #include <filesystem>
@@ -203,12 +204,19 @@ int main(int argc, char* argv[]) {
         int numThreads = (threadsArg >= 0) ? threadsArg 
             : fix40::Config::instance().get_int("server", "default_threads", 0);
 
-        // =====================================================================
-        // 2. 创建 SimulationApp
-        // =====================================================================
-        fix40::SimulationApp app;
-        auto& instrumentMgr = app.getInstrumentManager();
-        auto& engine = app.getMatchingEngine();
+	        // =====================================================================
+	        // 2. 创建 SimulationApp
+	        // =====================================================================
+	        const std::string dbPath =
+	            fix40::Config::instance().get("storage", "db_path", "fix_server.db");
+	        std::unique_ptr<fix40::SqliteStore> store;
+	        if (!dbPath.empty()) {
+	            store = std::make_unique<fix40::SqliteStore>(dbPath);
+	        }
+
+	        fix40::SimulationApp app(store.get());
+	        auto& instrumentMgr = app.getInstrumentManager();
+	        auto& engine = app.getMatchingEngine();
 
 #ifdef ENABLE_CTP
         // =====================================================================

@@ -9,6 +9,7 @@
 #include <rapidcheck.h>
 #include <rapidcheck/catch.h>
 #include "app/manager/account_manager.hpp"
+#include "storage/sqlite_store.hpp"
 #include <cmath>
 
 using namespace fix40;
@@ -22,6 +23,58 @@ TEST_CASE("AccountManager 默认构造", "[account_manager][unit]") {
     
     REQUIRE(mgr.size() == 0);
     REQUIRE(mgr.getAllAccountIds().empty());
+}
+
+TEST_CASE("AccountManager 使用 Store 时会加载并持久化账户", "[account_manager][persistence]") {
+    SqliteStore store(":memory:");
+
+    SECTION("构造时从 Store 恢复账户") {
+        Account seed("seed", 12345.0);
+        seed.frozenMargin = 10.0;
+        seed.usedMargin = 20.0;
+        seed.positionProfit = 30.0;
+        seed.closeProfit = 40.0;
+        seed.recalculateAvailable();
+
+        REQUIRE(store.saveAccount(seed));
+
+        AccountManager mgr(&store);
+        REQUIRE(mgr.hasAccount("seed"));
+
+        auto loaded = mgr.getAccount("seed");
+        REQUIRE(loaded.has_value());
+        REQUIRE(*loaded == seed);
+    }
+
+    SECTION("账户变更会写入 Store") {
+        AccountManager mgr(&store);
+        mgr.createAccount("user001", 1000000.0);
+
+        REQUIRE(mgr.freezeMargin("user001", 100000.0));
+        REQUIRE(mgr.confirmMargin("user001", 100000.0, 90000.0));
+        REQUIRE(mgr.updatePositionProfit("user001", 1234.0));
+
+        auto from_store = store.loadAccount("user001");
+        REQUIRE(from_store.has_value());
+
+        auto in_mem = mgr.getAccount("user001");
+        REQUIRE(in_mem.has_value());
+        REQUIRE(*from_store == *in_mem);
+    }
+
+    SECTION("新实例可从同一 Store 读取最新状态") {
+        {
+            AccountManager mgr(&store);
+            mgr.createAccount("user002", 500000.0);
+            REQUIRE(mgr.freezeMargin("user002", 1000.0));
+        }
+
+        AccountManager restored(&store);
+        auto restored_acc = restored.getAccount("user002");
+        REQUIRE(restored_acc.has_value());
+        REQUIRE(restored_acc->balance == Approx(500000.0));
+        REQUIRE(restored_acc->frozenMargin == Approx(1000.0));
+    }
 }
 
 TEST_CASE("AccountManager createAccount 创建账户", "[account_manager][unit]") {

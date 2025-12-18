@@ -70,6 +70,9 @@ public:
      * @brief 带存储接口的构造函数
      *
      * @param store 存储接口指针（可为nullptr）
+     *
+     * @note 当 store 不为空时，会在构造阶段从存储中加载已存在的账户，
+     * 用于服务端重启后的资金状态恢复。
      */
     explicit AccountManager(IStore* store);
 
