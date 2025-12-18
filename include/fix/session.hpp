@@ -116,15 +116,25 @@ public:
  *
  * @note 该类继承 std::enable_shared_from_this，必须通过 std::shared_ptr 管理
  */
-class Session : public std::enable_shared_from_this<Session> {
-public:
-    /// 会话关闭回调类型
-    using ShutdownCallback = std::function<void()>;
+	class Session : public std::enable_shared_from_this<Session> {
+	public:
+	    /// 会话关闭回调类型
+	    using ShutdownCallback = std::function<void()>;
 
-    /**
-     * @brief 构造会话对象
-     * @param sender 发送方 CompID
-     * @param target 接收方 CompID
+	    /**
+	     * @brief 会话建立回调类型
+	     *
+	     * 在完成 Logon 握手并进入 Established 状态后触发。
+	     * 常用于：服务端在此时将 Session 注册到 SessionManager。
+	     *
+	     * @note 回调可能在连接绑定的工作线程中执行，需保证线程安全。
+	     */
+	    using EstablishedCallback = std::function<void(std::shared_ptr<Session>)>;
+
+	    /**
+	     * @brief 构造会话对象
+	     * @param sender 发送方 CompID
+	     * @param target 接收方 CompID
      * @param hb 心跳间隔（秒）
      * @param shutdown_cb 会话关闭时的回调函数
      * @param store 存储接口指针（可选，用于消息持久化和断线恢复）
@@ -166,15 +176,44 @@ public:
      */
     Application* get_application() const;
 
-    /**
-     * @brief 获取会话标识符
-     * @return SessionID 包含 senderCompID 和 targetCompID
-     */
-    SessionID get_session_id() const;
+	    /**
+	     * @brief 获取会话标识符
+	     * @return SessionID 包含 senderCompID 和 targetCompID
+	     */
+	    SessionID get_session_id() const;
 
-    /**
-     * @brief 发送业务消息
-     * @param msg 要发送的业务消息
+	    /**
+	     * @brief 设置会话建立回调
+	     * @param cb 会话建立回调
+	     *
+	     * 当会话完成 Logon 握手并进入 Established 状态时调用。
+	     *
+	     * @note 回调只会触发一次（幂等）。
+	     */
+	    void set_established_callback(EstablishedCallback cb);
+
+	    /**
+	     * @brief 通知会话已建立
+	     *
+	     * 仅供内部状态机在完成 Logon 握手后调用，用于触发 EstablishedCallback。
+	     *
+	     * @note 该方法是幂等的：多次调用只会触发一次回调。
+	     */
+	    void notify_established();
+
+	    /**
+	     * @brief 更新对端 CompID
+	     * @param target 对端的真实 CompID（通常来自 Logon SenderCompID）
+	     *
+	     * 服务端在 accept 新连接时往往无法立即知道客户端 CompID。
+	     * 收到客户端 Logon 后，应将 targetCompID 更新为真实客户端 CompID，
+	     * 以便后续发送消息时能正确设置 TargetCompID(56)，并形成稳定的 SessionID。
+	     */
+	    void set_target_comp_id(const std::string& target);
+
+	    /**
+	     * @brief 发送业务消息
+	     * @param msg 要发送的业务消息
      *
      * 与 send() 的区别是会先调用 Application::toApp() 回调，
      * 允许应用层在发送前拦截或修改消息。
@@ -267,17 +306,17 @@ public:
      */
     void schedule_timer_tasks(TimingWheel* wheel);
 
-    /**
-     * @brief 切换会话状态
-     * @param newState 新状态对象
-     */
-    void changeState(std::unique_ptr<IStateHandler> newState);
+	    /**
+	     * @brief 切换会话状态
+	     * @param newState 新状态对象
+	     */
+	    void changeState(std::unique_ptr<IStateHandler> newState);
 
-    const std::string senderCompID;  ///< 发送方 CompID
-    const std::string targetCompID;  ///< 接收方 CompID
-    FixCodec codec_;                 ///< FIX 编解码器
+	    std::string senderCompID;  ///< 发送方 CompID
+	    std::string targetCompID;  ///< 接收方 CompID（服务端可在 Logon 后更新为真实客户端 CompID）
+	    FixCodec codec_;                 ///< FIX 编解码器
 
-    // --- 公共辅助函数（供状态类调用）---
+	    // --- 公共辅助函数（供状态类调用）---
 
     /**
      * @brief 发送 Logout 消息
@@ -451,10 +490,12 @@ private:
     TimingWheel* timing_wheel_ = nullptr;  ///< 时间轮指针
     TimerTaskId timer_task_id_ = INVALID_TIMER_ID; ///< 定时任务 ID
 
-    Application* application_ = nullptr;  ///< 应用层处理器指针
-    IStore* store_ = nullptr;             ///< 存储接口指针（用于消息持久化）
-    bool processingResend_ = false;       ///< 是否正在处理重传请求
-    std::string clientCompID_;            ///< 客户端标识（从 Logon 消息提取）
-};
+	    Application* application_ = nullptr;  ///< 应用层处理器指针
+	    IStore* store_ = nullptr;             ///< 存储接口指针（用于消息持久化）
+	    bool processingResend_ = false;       ///< 是否正在处理重传请求
+	    std::string clientCompID_;            ///< 客户端标识（从 Logon 消息提取）
+	    EstablishedCallback established_callback_; ///< 会话建立回调
+	    std::atomic<bool> established_notified_{false}; ///< 会话建立回调触发标志（幂等）
+	};
 
-} // namespace fix40
+	} // namespace fix40

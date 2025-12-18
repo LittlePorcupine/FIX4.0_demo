@@ -170,6 +170,66 @@ TEST_CASE("Server session receives valid Logon", "[session][state]") {
     REQUIRE_FALSE(shutdown_called);
 }
 
+TEST_CASE("Server session updates TargetCompID from Logon SenderCompID", "[session][state]") {
+    std::atomic<bool> shutdown_called{false};
+    auto session = create_test_session("SERVER", "PENDING", 30, [&shutdown_called]() {
+        shutdown_called = true;
+    });
+
+    session->start();
+    REQUIRE(session->is_running());
+
+    auto logon = create_logon_with_seq("ALICE", "SERVER", 1, 30);
+    session->on_message_received(logon);
+
+    REQUIRE_FALSE(shutdown_called);
+    REQUIRE(session->is_running());
+    REQUIRE(session->get_session_id() == SessionID("SERVER", "ALICE"));
+    REQUIRE(session->get_client_comp_id() == "ALICE");
+}
+
+TEST_CASE("Session established callback fires once", "[session]") {
+    std::atomic<bool> shutdown_called{false};
+    auto session = create_test_session("SERVER", "PENDING", 30, [&shutdown_called]() {
+        shutdown_called = true;
+    });
+
+    std::atomic<int> established_called{0};
+    session->set_established_callback([&](std::shared_ptr<Session> established) {
+        ++established_called;
+        REQUIRE(established->get_session_id() == SessionID("SERVER", "ALICE"));
+    });
+
+    session->start();
+    auto logon = create_logon_with_seq("ALICE", "SERVER", 1, 30);
+    session->on_message_received(logon);
+
+    REQUIRE_FALSE(shutdown_called);
+    REQUIRE(session->is_running());
+    REQUIRE(established_called == 1);
+
+    // 幂等：重复调用不会再次触发
+    session->notify_established();
+    REQUIRE(established_called == 1);
+}
+
+TEST_CASE("Server session rejects Logon with wrong TargetCompID", "[session][state]") {
+    std::atomic<bool> shutdown_called{false};
+    auto session = create_test_session("SERVER", "PENDING", 30, [&shutdown_called]() {
+        shutdown_called = true;
+    });
+
+    session->start();
+    REQUIRE(session->is_running());
+
+    // TargetCompID 不等于服务端 CompID，属于协议错误
+    auto logon = create_logon_with_seq("CLIENT", "WRONG_SERVER", 1, 30);
+    session->on_message_received(logon);
+
+    REQUIRE(shutdown_called);
+    REQUIRE_FALSE(session->is_running());
+}
+
 TEST_CASE("Server session rejects Logon with invalid heartbeat - too low", "[session][state]") {
     std::atomic<bool> shutdown_called{false};
     auto session = create_test_session("SERVER", "CLIENT", 30, [&shutdown_called]() {
