@@ -16,6 +16,7 @@ namespace fix40 {
 
 // 前置声明
 class Session;
+class IStore;
 
 /**
  * @struct SessionID
@@ -215,6 +216,21 @@ public:
         (void)msg;
         (void)sessionID;
     }
+
+    // =========================================================================
+    // 可选：持久化能力探测
+    // =========================================================================
+
+    /**
+     * @brief 获取持久化存储接口（可选）
+     *
+     * 用于让网络层/会话层组件以“依赖倒置”的方式获取持久化能力：
+     * - 当返回非空时，Session 可以将消息与会话序列号写入 store，用于断线恢复与 ResendRequest。
+     * - 默认实现返回 nullptr，表示当前 Application 不提供持久化能力。
+     *
+     * @return IStore* 存储接口指针，可能为 nullptr
+     */
+    virtual IStore* getStore() const { return nullptr; }
 };
 
 } // namespace fix40

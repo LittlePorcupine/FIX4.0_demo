@@ -30,6 +30,7 @@ void ClientApp::onLogon(const SessionID& sessionID) {
     // 登录后自动查询资金和持仓
     queryBalance();
     queryPositions();
+    queryOrderHistory();
 }
 
 void ClientApp::onLogout(const SessionID& sessionID) {
@@ -54,6 +55,8 @@ void ClientApp::fromApp(const FixMessage& msg, const SessionID& sessionID) {
         handlePositionUpdate(msg);
     } else if (msgType == "U8") {
         handleInstrumentSearchResponse(msg);
+    } else if (msgType == "U10") {
+        handleOrderHistoryResponse(msg);
     } else if (msgType == "j") {
         // BusinessMessageReject
         std::string text = msg.has(tags::Text) ? msg.get_string(tags::Text) : "Unknown error";
@@ -175,6 +178,16 @@ void ClientApp::queryPositions() {
     msg.set(tags::MsgType, "U3");
     msg.set(tags::RequestID, std::to_string(requestIdCounter_++));
     
+    session->send_app_message(msg);
+}
+
+void ClientApp::queryOrderHistory() {
+    auto session = session_.lock();
+    if (!session) return;
+
+    FixMessage msg;
+    msg.set(tags::MsgType, "U9");
+    msg.set(tags::RequestID, std::to_string(requestIdCounter_++));
     session->send_app_message(msg);
 }
 
@@ -441,6 +454,89 @@ void ClientApp::handleInstrumentSearchResponse(const FixMessage& msg) {
     }
     
     state_->setSearchResults(results);
+}
+
+void ClientApp::handleOrderHistoryResponse(const FixMessage& msg) {
+    // Text 字段包含序列化订单列表（与 ClientState::saveOrders 的格式对齐）：
+    // clOrdID|orderId|symbol|side|price|orderQty|filledQty|avgPx|state|text|updateTime
+    if (!msg.has(tags::Text)) {
+        state_->clearOrders();
+        state_->setLastError("订单历史响应格式无效：缺少 Text 字段");
+        state_->addMessage("订单历史响应格式无效");
+        return;
+    }
+
+    std::string text = msg.get_string(tags::Text);
+    if (text.empty()) {
+        state_->clearOrders();
+        state_->addMessage("订单历史为空");
+        return;
+    }
+
+    std::vector<OrderInfo> orders;
+    std::istringstream iss(text);
+    std::string line;
+
+    while (std::getline(iss, line)) {
+        if (line.empty()) continue;
+
+        std::vector<std::string> fields;
+        std::istringstream lineIss(line);
+        std::string field;
+        while (std::getline(lineIss, field, '|')) {
+            fields.push_back(field);
+        }
+
+        // 协议/格式兼容策略：
+        // - 至少需要到 state 字段（第 9 个字段）才能构造 OrderInfo；
+        // - 如未来服务端增加字段，客户端忽略多余字段以保持兼容性。
+        if (fields.size() < 9) {
+            continue;
+        }
+
+        OrderInfo order;
+        order.clOrdID = fields[0];
+        order.orderId = fields[1];
+        order.symbol = fields[2];
+        order.side = fields[3];
+
+        auto safeStod = [](const std::string& s) -> double {
+            try { return std::stod(s); } catch (...) { return 0.0; }
+        };
+        auto safeStoll = [](const std::string& s) -> int64_t {
+            try { return std::stoll(s); } catch (...) { return 0; }
+        };
+
+        order.price = safeStod(fields[4]);
+        order.orderQty = safeStoll(fields[5]);
+        order.filledQty = safeStoll(fields[6]);
+        order.avgPx = safeStod(fields[7]);
+
+        int stateVal = 0;
+        try {
+            stateVal = std::stoi(fields[8]);
+        } catch (...) {
+            stateVal = 0;
+        }
+        if (stateVal < 0 || stateVal > static_cast<int>(OrderState::REJECTED)) {
+            stateVal = 0;
+        }
+        order.state = static_cast<OrderState>(stateVal);
+
+        if (fields.size() >= 10) {
+            order.text = fields[9];
+        }
+        if (fields.size() >= 11) {
+            order.updateTime = fields[10];
+        }
+
+        if (!order.clOrdID.empty()) {
+            orders.push_back(std::move(order));
+        }
+    }
+
+    state_->setOrders(orders);
+    state_->addMessage("订单历史已刷新 (" + std::to_string(orders.size()) + ")");
 }
 
 std::string ClientApp::generateClOrdID() {

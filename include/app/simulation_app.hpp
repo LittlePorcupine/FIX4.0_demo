@@ -208,7 +208,7 @@ public:
      *
      * 该指针用于账户/持仓等数据的持久化与重启恢复。
      */
-    IStore* getStore() const { return store_; }
+    IStore* getStore() const override { return store_; }
 
     // =========================================================================
     // 管理器访问接口
@@ -371,6 +371,19 @@ private:
      * @param sessionID 会话标识
      */
     void handleInstrumentSearch(const FixMessage& msg, const SessionID& sessionID);
+
+    /**
+     * @brief 处理订单历史查询请求 (MsgType = U9)
+     *
+     * 从服务端持久化存储中加载该用户的历史订单，并返回 U10 响应。
+     *
+     * @param msg FIX 请求消息
+     * @param sessionID 会话标识
+     * @param userId 绑定的用户ID（从 Session 提取，非消息体）
+     *
+     * @note 由于 FIX RepeatingGroup 实现较复杂，本项目将订单列表序列化为文本放入 Text(58)。
+     */
+    void handleOrderHistoryQuery(const FixMessage& msg, const SessionID& sessionID, const std::string& userId);
 
     /**
      * @brief 发送拒绝消息

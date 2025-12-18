@@ -62,6 +62,7 @@ Component TuiApp::createMainComponent() {
     auto refreshButton = Button("刷新 [F5]", [this] {
         app_->queryBalance();
         app_->queryPositions();
+        app_->queryOrderHistory();
     });
     
     // 退出按钮
@@ -155,6 +156,7 @@ Component TuiApp::createMainComponent() {
         if (event == Event::F5 || event == Event::Character('r') || event == Event::Character('R')) {
             app_->queryBalance();
             app_->queryPositions();
+            app_->queryOrderHistory();
             return true;
         }
         return false;

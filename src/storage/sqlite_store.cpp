@@ -60,6 +60,7 @@ bool SqliteStore::initTables() {
         CREATE TABLE IF NOT EXISTS orders (
             cl_ord_id TEXT PRIMARY KEY,
             order_id TEXT,
+            account_id TEXT NOT NULL DEFAULT '',
             symbol TEXT NOT NULL,
             side INTEGER NOT NULL,
             order_type INTEGER NOT NULL,
@@ -151,13 +152,33 @@ bool SqliteStore::initTables() {
     const char* createIndexes = R"(
         CREATE INDEX IF NOT EXISTS idx_orders_symbol ON orders(symbol);
         CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+        CREATE INDEX IF NOT EXISTS idx_orders_account ON orders(account_id);
         CREATE INDEX IF NOT EXISTS idx_trades_cl_ord_id ON trades(cl_ord_id);
         CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(sender_comp_id, target_comp_id, seq_num);
         CREATE INDEX IF NOT EXISTS idx_positions_account ON positions(account_id);
     )";
 
-    return execute(createOrders) && execute(createTrades) && 
+    // 兼容旧数据库：为 orders 表补齐 account_id 字段（用于按用户隔离查询订单历史）。
+    // SQLite 不支持 IF NOT EXISTS，因此这里容错“重复列名”错误。
+    auto addOrderAccountIdColumn = [&]() -> bool {
+        if (!db_) return false;
+        char* errMsg = nullptr;
+        const char* sql = "ALTER TABLE orders ADD COLUMN account_id TEXT NOT NULL DEFAULT ''";
+        int rc = sqlite3_exec(db_, sql, nullptr, nullptr, &errMsg);
+        if (rc == SQLITE_OK) {
+            return true;
+        }
+        const std::string err = errMsg ? std::string(errMsg) : "";
+        sqlite3_free(errMsg);
+        if (err.find("duplicate column name") != std::string::npos) {
+            return true;
+        }
+        LOG() << "[SqliteStore] SQL 执行失败: " << err;
+        return false;
+    };
+
+    return execute(createOrders) && addOrderAccountIdColumn() && execute(createTrades) && 
            execute(createSessions) && execute(createMessages) &&
            execute(createAccounts) && execute(createPositions) && execute(createIndexes);
 }
@@ -223,13 +244,17 @@ StoredTrade SqliteStore::extractTrade(sqlite3_stmt* stmt) {
 // =============================================================================
 
 bool SqliteStore::saveOrder(const Order& order) {
+    return saveOrderForAccount(order, "");
+}
+
+bool SqliteStore::saveOrderForAccount(const Order& order, const std::string& accountId) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!db_) return false;
     
     const char* sql = R"(
-        INSERT INTO orders (cl_ord_id, order_id, symbol, side, order_type, time_in_force,
+        INSERT INTO orders (cl_ord_id, order_id, account_id, symbol, side, order_type, time_in_force,
                            price, order_qty, cum_qty, leaves_qty, avg_px, status, create_time, update_time)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     )";
 
     sqlite3_stmt* stmt = nullptr;
@@ -244,18 +269,19 @@ bool SqliteStore::saveOrder(const Order& order) {
 
     sqlite3_bind_text(stmt, 1, order.clOrdID.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, order.orderID.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 3, order.symbol.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 4, static_cast<int>(order.side));
-    sqlite3_bind_int(stmt, 5, static_cast<int>(order.ordType));
-    sqlite3_bind_int(stmt, 6, static_cast<int>(order.timeInForce));
-    sqlite3_bind_double(stmt, 7, order.price);
-    sqlite3_bind_int64(stmt, 8, order.orderQty);
-    sqlite3_bind_int64(stmt, 9, order.cumQty);
-    sqlite3_bind_int64(stmt, 10, order.leavesQty);
-    sqlite3_bind_double(stmt, 11, order.avgPx);
-    sqlite3_bind_int(stmt, 12, static_cast<int>(order.status));
-    sqlite3_bind_int64(stmt, 13, now);
+    sqlite3_bind_text(stmt, 3, accountId.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, order.symbol.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 5, static_cast<int>(order.side));
+    sqlite3_bind_int(stmt, 6, static_cast<int>(order.ordType));
+    sqlite3_bind_int(stmt, 7, static_cast<int>(order.timeInForce));
+    sqlite3_bind_double(stmt, 8, order.price);
+    sqlite3_bind_int64(stmt, 9, order.orderQty);
+    sqlite3_bind_int64(stmt, 10, order.cumQty);
+    sqlite3_bind_int64(stmt, 11, order.leavesQty);
+    sqlite3_bind_double(stmt, 12, order.avgPx);
+    sqlite3_bind_int(stmt, 13, static_cast<int>(order.status));
     sqlite3_bind_int64(stmt, 14, now);
+    sqlite3_bind_int64(stmt, 15, now);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -273,6 +299,9 @@ bool SqliteStore::updateOrder(const Order& order) {
     
     const char* sql = R"(
         UPDATE orders SET
+            -- 仅在新值非空时更新 order_id：
+            -- 该行为使 updateOrder() 幂等且避免“错误清空”订单号；
+            -- 如需显式清空字段，请提供单独的维护接口（当前暂不支持）。
             order_id = COALESCE(NULLIF(?, ''), order_id),
             cum_qty = ?,
             leaves_qty = ?,
@@ -350,6 +379,32 @@ std::vector<Order> SqliteStore::loadOrdersBySymbol(const std::string& symbol) {
     }
 
     sqlite3_bind_text(stmt, 1, symbol.c_str(), -1, SQLITE_TRANSIENT);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        orders.push_back(extractOrder(stmt));
+    }
+
+    sqlite3_finalize(stmt);
+    return orders;
+}
+
+std::vector<Order> SqliteStore::loadOrdersByAccount(const std::string& accountId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<Order> orders;
+    if (!db_) return orders;
+
+    const char* sql = R"(
+        SELECT cl_ord_id, order_id, symbol, side, order_type, time_in_force,
+               price, order_qty, cum_qty, leaves_qty, avg_px, status
+        FROM orders WHERE account_id = ? ORDER BY create_time DESC
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return orders;
+    }
+
+    sqlite3_bind_text(stmt, 1, accountId.c_str(), -1, SQLITE_TRANSIENT);
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         orders.push_back(extractOrder(stmt));

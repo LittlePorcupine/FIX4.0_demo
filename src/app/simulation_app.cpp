@@ -20,6 +20,7 @@
 #include <iomanip>
 #include <set>
 #include <optional>
+#include <algorithm>
 
 namespace fix40 {
 
@@ -281,6 +282,10 @@ void SimulationApp::fromApp(const FixMessage& msg, const SessionID& sessionID) {
         // InstrumentSearchRequest - 合约搜索（自定义）
         // 注意：合约搜索不需要用户身份验证
         handleInstrumentSearch(msg, sessionID);
+    }
+    else if (msgType == "U9") {
+        // OrderHistoryQueryRequest - 订单历史查询（自定义）
+        handleOrderHistoryQuery(msg, sessionID, userId);
     }
     else {
         // 未知消息类型
@@ -567,7 +572,7 @@ void SimulationApp::handleNewOrderSingle(const FixMessage& msg, const SessionID&
     // 将订单的初始状态写入存储（通常为 PENDING_NEW）。
     // 后续状态变化由 onExecutionReport() 驱动 updateOrder() 完成。
     if (store_) {
-        if (!store_->saveOrder(order)) {
+        if (!store_->saveOrderForAccount(order, userId)) {
             LOG() << "[SimulationApp] Warning: Failed to persist new order: ClOrdID="
                   << order.clOrdID;
         }
@@ -1043,6 +1048,81 @@ void SimulationApp::handleInstrumentSearch(const FixMessage& msg, const SessionI
               << sessionID.to_string();
     } else {
         LOG() << "[SimulationApp] Sent instrument search response: " << results.size() << " results";
+    }
+}
+
+void SimulationApp::handleOrderHistoryQuery(const FixMessage& msg, const SessionID& sessionID, const std::string& userId) {
+    LOG() << "[SimulationApp] Processing order history query for user: " << userId;
+
+    if (!store_) {
+        // 未启用持久化时，返回空列表（best effort）
+        FixMessage response;
+        response.set(tags::MsgType, "U10");
+        if (msg.has(tags::RequestID)) {
+            response.set(tags::RequestID, msg.get_string(tags::RequestID));
+        }
+        response.set(tags::Text, "");
+        sessionManager_.sendMessage(sessionID, response);
+        return;
+    }
+
+    std::vector<Order> orders = store_->loadOrdersByAccount(userId);
+    if (msg.has(tags::Symbol) && !msg.get_string(tags::Symbol).empty()) {
+        const std::string symbol = msg.get_string(tags::Symbol);
+        orders.erase(
+            std::remove_if(
+                orders.begin(),
+                orders.end(),
+                [&](const Order& o) { return o.symbol != symbol; }),
+            orders.end());
+    }
+
+    auto toClientOrderState = [](OrderStatus status) -> int {
+        // client::OrderState: PENDING_NEW=0, NEW=1, PARTIALLY_FILLED=2, FILLED=3, CANCELED=4, REJECTED=5
+        switch (status) {
+            case OrderStatus::PENDING_NEW: return 0;
+            case OrderStatus::NEW: return 1;
+            case OrderStatus::PARTIALLY_FILLED: return 2;
+            case OrderStatus::FILLED: return 3;
+            case OrderStatus::CANCELED: return 4;
+            case OrderStatus::REJECTED: return 5;
+            default: return 0;
+        }
+    };
+
+    auto toSideString = [](OrderSide side) -> const char* {
+        return side == OrderSide::BUY ? "BUY" : "SELL";
+    };
+
+    // 序列化格式与 client 本地文件保存格式对齐：每行一个订单，字段用 '|' 分隔。
+    // clOrdID|orderId|symbol|side|price|orderQty|filledQty|avgPx|state|text|updateTime
+    std::ostringstream text;
+    text << std::fixed << std::setprecision(6);
+    for (const auto& o : orders) {
+        text << o.clOrdID << "|"
+             << o.orderID << "|"
+             << o.symbol << "|"
+             << toSideString(o.side) << "|"
+             << o.price << "|"
+             << o.orderQty << "|"
+             << o.cumQty << "|"
+             << o.avgPx << "|"
+             << toClientOrderState(o.status) << "|"
+             << "-" << "|"
+             << "-"
+             << "\n";
+    }
+
+    FixMessage response;
+    response.set(tags::MsgType, "U10");
+    if (msg.has(tags::RequestID)) {
+        response.set(tags::RequestID, msg.get_string(tags::RequestID));
+    }
+    response.set(tags::Account, userId);
+    response.set(tags::Text, text.str());
+
+    if (!sessionManager_.sendMessage(sessionID, response)) {
+        LOG() << "[SimulationApp] Failed to send order history response to " << sessionID.to_string();
     }
 }
 

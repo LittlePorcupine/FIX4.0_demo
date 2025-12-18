@@ -172,10 +172,14 @@ void FixServer::on_new_connection(int fd) {
         });
     };
 
+    // 若应用层提供持久化接口，则将 store 注入 Session：
+    // 这样 Session 才能持久化消息与会话序列号，支持断线重连与 ResendRequest。
+    auto* store = application_ ? application_->getStore() : nullptr;
+
     // 创建 session 和 connection，传入线程池和绑定的线程索引
     // 服务端在收到客户端 Logon 之前并不知道真实的客户端 CompID，
     // 先用占位符初始化 TargetCompID，待 Logon 解析后再更新。
-    auto session = std::make_shared<Session>("SERVER", "PENDING", 30, on_conn_close);
+    auto session = std::make_shared<Session>("SERVER", "PENDING", 30, on_conn_close, store);
     auto connection = std::make_shared<Connection>(
         fd, reactor_.get(), session,
         worker_pool_.get(), thread_index

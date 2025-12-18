@@ -23,6 +23,12 @@
 
 namespace fix40 {
 
+namespace {
+
+constexpr const char* kPendingTargetCompID = "PENDING";
+
+} // namespace
+
 // =================================================================================
 // 状态类声明
 // =================================================================================
@@ -146,7 +152,12 @@ Session::Session(const std::string& sender,
     
     // 如果有存储接口，尝试恢复会话状态
     if (store_) {
-        restore_session_state();
+        // 服务端 accept 阶段使用占位 TargetCompID（例如 "PENDING"）创建 Session，
+        // 此时真实客户端 CompID 尚未知晓，不能用占位 key 恢复序列号。
+        // 待收到 Logon 并完成身份绑定后再恢复，避免错误读取或写入 session_states。
+        if (targetCompID != kPendingTargetCompID) {
+            restore_session_state();
+        }
     }
 }
 
@@ -263,6 +274,14 @@ void Session::on_message_received(const FixMessage& msg) {
 
     const int msg_seq_num = msg.get_int(tags::MsgSeqNum);
     const std::string msg_type = msg.get_string(tags::MsgType);
+
+    // Logon 属于会话层握手消息：在 Disconnected 阶段不做严格的序列号校验，
+    // 以便服务端在解析出真实客户端 CompID 后，从持久化存储恢复正确的 recvSeqNum/sendSeqNum。
+    // 否则重连时客户端可能发送较大的 MsgSeqNum（按上次会话继续），会被误判为 gap 并断开。
+    if (msg_type == "A" && dynamic_cast<DisconnectedState*>(currentState_.get()) != nullptr) {
+        currentState_->onMessageReceived(*this, msg);
+        return;
+    }
     
     // 检查是否是 SequenceReset 消息（特殊处理）
     if (msg_type == "4") {
@@ -450,8 +469,6 @@ void Session::send_test_request(const std::string& id) {
 void DisconnectedState::onMessageReceived(Session& context, const FixMessage& msg) {
     // 此逻辑主要用于服务器端。
     if (msg.get_string(tags::MsgType) == "A") {
-        context.increment_recv_seq_num();
-
         if (context.senderCompID == "SERVER") {
             // 从 Logon 消息中提取客户端标识
             // FIX 协议中，客户端发送的 Logon 消息的 SenderCompID 是客户端的标识
@@ -482,6 +499,15 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
 
             // 将会话的 TargetCompID 更新为真实客户端 CompID，使后续发包 TargetCompID(56) 正确
             context.set_target_comp_id(clientCompID);
+
+            // 现在已具备稳定的 (senderCompID, targetCompID) key，可以从 store 恢复序列号。
+            if (context.get_store()) {
+                context.restore_session_state();
+            }
+
+            // Logon 消息本身已经被消费：将期望接收序列号推进到当前 MsgSeqNum + 1。
+            // 若已从 store 恢复 recvSeqNum，这里也确保与对端 Logon 继续序列对齐。
+            context.set_recv_seq_num(msg.get_int(tags::MsgSeqNum) + 1);
             
             const int client_hb_interval = msg.get_int(tags::HeartBtInt);
             // 注意：真实实现应当从会话上下文获取最小和最大值，
