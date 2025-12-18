@@ -7,8 +7,6 @@
 
 #include "app/engine/matching_engine.hpp"
 #include "app/manager/risk_manager.hpp"
-#include "app/manager/account_manager.hpp"
-#include "app/manager/position_manager.hpp"
 #include "app/manager/instrument_manager.hpp"
 #include "base/logger.hpp"
 #include <sstream>
@@ -172,9 +170,20 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
     LOG() << "  OrdType: " << ordTypeToString(order.ordType);
     LOG() << "  TimeInForce: " << tifToString(order.timeInForce);
     
+    // userId 由上层 Application 在收到业务消息时完成身份绑定与校验。
+    // 撮合引擎仍做一次防御性检查，避免产生无法路由或无法归属的订单状态。
+    if (event.userId.empty()) {
+        LOG() << "[MatchingEngine] Order rejected: empty userId";
+        order.status = OrderStatus::REJECTED;
+        auto report = buildRejectReport(order, RejectReason::NONE, "Invalid user identity");
+        report.execID = generateExecID();
+        sendExecutionReport(event.sessionID, report);
+        return;
+    }
+
     // 记录订单与会话的映射
     orderSessionMap_[order.clOrdID] = event.sessionID;
-    // 记录订单与用户ID的映射（用于持仓更新）
+    // 记录订单与用户ID的映射（用于日志/追踪；资金与持仓更新由上层处理）
     orderUserMap_[order.clOrdID] = event.userId;
     
     // 获取行情快照
@@ -184,96 +193,6 @@ void MatchingEngine::handle_new_order(const OrderEvent& event) {
         snapshot = snapshotIt->second;
     } else {
         snapshot.instrumentId = order.symbol;
-    }
-    
-    // =========================================================================
-    // 风控检查（如果设置了RiskManager）
-    // =========================================================================
-    if (riskManager_ && accountManager_ && instrumentManager_) {
-        // 获取账户信息（使用从 Session 提取的真实用户ID）
-        std::string accountId = event.userId;
-        if (accountId.empty()) {
-            LOG() << "[MatchingEngine] Order rejected: empty userId";
-            order.status = OrderStatus::REJECTED;
-            auto report = buildRejectReport(order, RejectReason::NONE, "Invalid user identity");
-            report.execID = generateExecID();
-            sendExecutionReport(event.sessionID, report);
-            orderSessionMap_.erase(order.clOrdID); orderUserMap_.erase(order.clOrdID);
-            return;
-        }
-        auto accountOpt = accountManager_->getAccount(accountId);
-        
-        // 如果账户不存在，创建默认账户
-        Account account;
-        if (accountOpt) {
-            account = *accountOpt;
-        } else {
-            account = accountManager_->createAccount(accountId, 1000000.0);  // 默认100万
-        }
-        
-        // 获取持仓信息
-        Position position;
-        if (positionManager_) {
-            auto posOpt = positionManager_->getPosition(accountId, order.symbol);
-            if (posOpt) {
-                position = *posOpt;
-            } else {
-                position.accountId = accountId;
-                position.instrumentId = order.symbol;
-            }
-        }
-        
-        // 获取合约信息
-        auto instPtr = instrumentManager_->getInstrument(order.symbol);
-        if (!instPtr) {
-            // 合约不存在，拒绝订单
-            LOG() << "[MatchingEngine] Order rejected: instrument " << order.symbol << " not found";
-            order.status = OrderStatus::REJECTED;
-            
-            auto report = buildRejectReport(order, RejectReason::INSTRUMENT_NOT_FOUND, "Instrument not found");
-            report.execID = generateExecID();
-            
-            sendExecutionReport(event.sessionID, report);
-            orderSessionMap_.erase(order.clOrdID); orderUserMap_.erase(order.clOrdID);
-            return;
-        }
-        
-        Instrument instrument = *instPtr;
-        
-        // 执行风控检查（假设开仓）
-        CheckResult checkResult = riskManager_->checkOrder(
-            order, account, position, instrument, snapshot, OffsetFlag::OPEN);
-        
-        if (!checkResult.passed) {
-            LOG() << "[MatchingEngine] Order rejected by risk check: " << checkResult.rejectText;
-            order.status = OrderStatus::REJECTED;
-            
-            auto report = buildRejectReport(order, checkResult.rejectReason, checkResult.rejectText);
-            report.execID = generateExecID();
-            
-            sendExecutionReport(event.sessionID, report);
-            orderSessionMap_.erase(order.clOrdID); orderUserMap_.erase(order.clOrdID);
-            return;
-        }
-        
-        LOG() << "[MatchingEngine] Risk check passed for order " << order.clOrdID;
-        
-        // 冻结保证金（下单时冻结，成交时确认）
-        double estimatedPrice = order.price > 0 ? order.price : snapshot.lastPrice;
-        double marginToFreeze = estimatedPrice * order.orderQty * instrument.volumeMultiple * instrument.marginRate;
-        if (!accountManager_->freezeMargin(accountId, marginToFreeze)) {
-            LOG() << "[MatchingEngine] Order rejected: insufficient margin to freeze";
-            order.status = OrderStatus::REJECTED;
-            
-            auto report = buildRejectReport(order, RejectReason::INSUFFICIENT_FUNDS, "Insufficient margin");
-            report.execID = generateExecID();
-            
-            sendExecutionReport(event.sessionID, report);
-            orderSessionMap_.erase(order.clOrdID); orderUserMap_.erase(order.clOrdID);
-            return;
-        }
-        
-        LOG() << "[MatchingEngine] Margin frozen for order " << order.clOrdID << ": " << marginToFreeze;
     }
     
     // 尝试立即撮合

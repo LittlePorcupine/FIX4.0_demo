@@ -181,10 +181,8 @@ SimulationApp::SimulationApp(IStore* store)
 }
 
 void SimulationApp::initializeManagers() {
-    // 设置撮合引擎与各管理器的关联
-    engine_.setRiskManager(&riskManager_);
-    engine_.setAccountManager(&accountManager_);
-    engine_.setPositionManager(&positionManager_);
+    // 撮合引擎只负责撮合与订单状态推进；账户/持仓/风控等业务权威逻辑由 SimulationApp 负责。
+    // 撮合引擎仅需要合约信息用于行情驱动撮合相关的辅助更新（如涨跌停价格）。
     engine_.setInstrumentManager(&instrumentManager_);
     
     // 设置 ExecutionReport 回调
