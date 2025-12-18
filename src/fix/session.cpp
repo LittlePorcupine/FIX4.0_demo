@@ -174,6 +174,35 @@ SessionID Session::get_session_id() const {
     return SessionID(senderCompID, targetCompID);
 }
 
+void Session::set_established_callback(EstablishedCallback cb) {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    established_callback_ = std::move(cb);
+}
+
+void Session::notify_established() {
+    // Fast path：多数情况下 notify 只会调用一次；若已触发过则直接返回，避免进入锁竞争。
+    if (established_notified_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    EstablishedCallback cb;
+    {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+        if (established_notified_.exchange(true, std::memory_order_acq_rel)) {
+            return;
+        }
+        cb = established_callback_;
+    }
+    if (cb) {
+        cb(shared_from_this());
+    }
+}
+
+void Session::set_target_comp_id(const std::string& target) {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    targetCompID = target;
+}
+
 void Session::send_app_message(FixMessage& msg) {
     std::lock_guard<std::recursive_mutex> lock(state_mutex_);
     
@@ -433,6 +462,13 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
                 context.perform_shutdown("Missing SenderCompID in Logon");
                 return;
             }
+            // FIX 协议中，客户端 Logon 的 TargetCompID 应该是服务端的 CompID
+            if (!msg.has(tags::TargetCompID) || msg.get_string(tags::TargetCompID) != context.senderCompID) {
+                LOG() << "Logon rejected: invalid TargetCompID";
+                // 目标不匹配属于协议错误，直接断开即可
+                context.perform_shutdown("Invalid TargetCompID in Logon");
+                return;
+            }
             std::string clientCompID = msg.get_string(tags::SenderCompID);
             if (clientCompID.empty()) {
                 LOG() << "Logon rejected: empty SenderCompID";
@@ -443,6 +479,9 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
             }
             context.set_client_comp_id(clientCompID);
             LOG() << "Client CompID extracted from Logon: " << clientCompID;
+
+            // 将会话的 TargetCompID 更新为真实客户端 CompID，使后续发包 TargetCompID(56) 正确
+            context.set_target_comp_id(clientCompID);
             
             const int client_hb_interval = msg.get_int(tags::HeartBtInt);
             // 注意：真实实现应当从会话上下文获取最小和最大值，
@@ -462,6 +501,11 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
                 auto logon_ack = create_logon_message(context.senderCompID, context.targetCompID, 1, context.get_heart_bt_int());
                 context.send(logon_ack);
                 context.changeState(std::make_unique<EstablishedState>());
+
+                // 会话已建立：在同一调用栈中同步执行“先回调、再通知应用层”的顺序。
+                // 这样做的目的，是确保应用层收到 onLogon 事件之前，SessionManager 已完成注册，
+                // 从而避免应用层在 onLogon 内部查找会话时出现“找不到 session”的竞态问题。
+                context.notify_established();
                 
                 // 通知应用层会话已建立
                 if (Application* app = context.get_application()) {
@@ -510,6 +554,10 @@ void LogonSentState::onMessageReceived(Session& context, const FixMessage& msg) 
         context.increment_recv_seq_num();
         LOG() << "Logon confirmation received. Session established.";
         context.changeState(std::make_unique<EstablishedState>());
+
+        // 会话已建立：在同一调用栈中同步执行“先回调、再通知应用层”的顺序。
+        // 这样做的目的，是确保应用层收到 onLogon 事件之前，SessionManager 已完成注册。
+        context.notify_established();
         
         // 通知应用层会话已建立
         if (Application* app = context.get_application()) {

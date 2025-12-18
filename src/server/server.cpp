@@ -173,20 +173,24 @@ void FixServer::on_new_connection(int fd) {
     };
 
     // 创建 session 和 connection，传入线程池和绑定的线程索引
-    auto session = std::make_shared<Session>("SERVER", "CLIENT", 30, on_conn_close);
+    // 服务端在收到客户端 Logon 之前并不知道真实的客户端 CompID，
+    // 先用占位符初始化 TargetCompID，待 Logon 解析后再更新。
+    auto session = std::make_shared<Session>("SERVER", "PENDING", 30, on_conn_close);
     auto connection = std::make_shared<Connection>(
         fd, reactor_.get(), session,
         worker_pool_.get(), thread_index
     );
     session->set_connection(connection);
-    
+
     // 设置应用层处理器
     if (application_) {
         session->set_application(application_);
-        
-        // 如果是 SimulationApp，注册 Session 到 SessionManager
+
+        // 如果是 SimulationApp：在 Logon 完成后再注册 Session（避免多客户端 SessionID 冲突）
         if (auto* simApp = dynamic_cast<SimulationApp*>(application_)) {
-            simApp->getSessionManager().registerSession(session);
+            session->set_established_callback([simApp](std::shared_ptr<Session> established) {
+                simApp->getSessionManager().registerSession(std::move(established));
+            });
         }
     }
 
