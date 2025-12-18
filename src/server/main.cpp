@@ -212,6 +212,11 @@ int main(int argc, char* argv[]) {
 	        std::unique_ptr<fix40::SqliteStore> store;
 	        if (!dbPath.empty()) {
 	            store = std::make_unique<fix40::SqliteStore>(dbPath);
+	            if (!store->isOpen()) {
+	                LOG() << "[Server] Warning: failed to open SQLite db at path: " << dbPath
+	                      << ", persistence disabled for this run.";
+	                store.reset();
+	            }
 	        }
 
 	        fix40::SimulationApp app(store.get());
