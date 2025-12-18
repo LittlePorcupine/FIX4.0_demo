@@ -331,6 +331,8 @@ void SimulationApp::onExecutionReport(const SessionID& sessionID, const Executio
             trade.price = report.lastPx;
             trade.quantity = report.lastShares;
             trade.timestamp = to_epoch_millis(report.transactTime);
+            // 模拟撮合为单边撮合：当前系统没有真实的“对手方订单”概念。
+            // 该字段为未来扩展双边撮合/对手方回报预留，因此暂固定为空。
             trade.counterpartyOrderId = "";
 
             if (!store_->saveTrade(trade)) {

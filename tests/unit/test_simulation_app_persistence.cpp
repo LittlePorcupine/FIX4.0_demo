@@ -7,17 +7,18 @@
 #include <thread>
 
 using namespace fix40;
+using namespace std::chrono_literals;
 
 namespace {
 
 template<typename Predicate>
-bool waitFor(Predicate pred, std::chrono::milliseconds timeout = std::chrono::milliseconds(1000)) {
+bool waitFor(Predicate pred, std::chrono::milliseconds timeout = 1000ms) {
     auto start = std::chrono::steady_clock::now();
     while (!pred()) {
         if (std::chrono::steady_clock::now() - start > timeout) {
             return false;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(10ms);
     }
     return true;
 }
@@ -88,3 +89,58 @@ TEST_CASE("SimulationApp - order/trade persistence", "[application][storage]") {
     app.stop();
 }
 
+TEST_CASE("SimulationApp - rejected order persists status without orderID", "[application][storage]") {
+    SqliteStore store(":memory:");
+    REQUIRE(store.isOpen());
+
+    SimulationApp app(&store);
+
+    // 添加测试合约
+    Instrument inst("TEST", "TESTEX", "T", 1.0, 1, 0.1);
+    app.getInstrumentManager().addInstrument(inst);
+
+    auto session = std::make_shared<Session>("SERVER", "CLIENT1", 30, []() {});
+    session->set_client_comp_id("CLIENT1");
+    app.getSessionManager().registerSession(session);
+    SessionID sid = session->get_session_id();
+
+    app.start();
+
+    // 注入带涨跌停的行情，用于价格风控
+    MarketData md;
+    md.setInstrumentID("TEST");
+    md.lastPrice = 100.0;
+    md.bidPrice1 = 99.0;
+    md.bidVolume1 = 10;
+    md.askPrice1 = 100.0;
+    md.askVolume1 = 10;
+    md.upperLimitPrice = 200.0;
+    md.lowerLimitPrice = 50.0;
+
+    app.getMatchingEngine().submitMarketData(md);
+    REQUIRE(waitFor([&]() { return app.getMatchingEngine().getMarketSnapshot("TEST") != nullptr; }));
+
+    // 发送一个超出涨停价的限价单，触发风险拒绝（不进入撮合引擎，因此不会生成 orderID）
+    FixMessage order;
+    order.set(tags::MsgType, "D");
+    order.set(tags::ClOrdID, "ORD-REJECT-001");
+    order.set(tags::Symbol, "TEST");
+    order.set(tags::Side, "1");
+    order.set(tags::OrderQty, "1");
+    order.set(tags::OrdType, "2");
+    order.set(tags::Price, "300");
+
+    app.fromApp(order, sid);
+
+    // 订单应存在于 DB 且状态已更新为 REJECTED，同时 orderID 仍为空。
+    REQUIRE(waitFor([&]() {
+        auto loaded = store.loadOrder("ORD-REJECT-001");
+        return loaded.has_value() && loaded->status == OrderStatus::REJECTED;
+    }));
+
+    auto loaded = store.loadOrder("ORD-REJECT-001");
+    REQUIRE(loaded.has_value());
+    REQUIRE(loaded->orderID.empty());
+
+    app.stop();
+}
