@@ -11,6 +11,7 @@
 #include "../client_app.hpp"
 #include "components/order_panel.hpp"
 #include "components/search_box.hpp"
+#include "components/message_panel.hpp"
 #include <memory>
 
 namespace fix40::client::tui {
@@ -53,7 +54,9 @@ private:
     
     // 组件状态
     std::shared_ptr<OrderPanelState> orderPanelState_;
+    std::shared_ptr<OrderListState> orderListState_;
     std::shared_ptr<SearchBoxState> searchBoxState_;
+    std::shared_ptr<MessagePanelState> messagePanelState_;
 };
 
 } // namespace fix40::client::tui

@@ -162,6 +162,7 @@ add_executable(fix_client
     src/client/tui/components/position_panel.cpp
     src/client/tui/components/account_panel.cpp
     src/client/tui/components/search_box.cpp
+    src/client/tui/components/message_panel.cpp
 )
 # 链接 fix_engine 库和 FTXUI 到客户端
 target_link_libraries(fix_client PRIVATE 

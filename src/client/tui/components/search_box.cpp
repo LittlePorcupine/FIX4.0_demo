@@ -28,19 +28,22 @@ Component SearchBoxComponent(
             return false;
         }
         
-        // 上下键选择
+        // 上下键选择（仅在下拉列表打开且有结果时拦截，避免影响 Tab-Only 的板块切换）
         if (event == Event::ArrowDown) {
-            if (!results.empty()) {
+            if (searchState->showDropdown && !results.empty()) {
                 searchState->selectedIndex = std::min(
                     searchState->selectedIndex + 1,
                     static_cast<int>(results.size()) - 1);
-                searchState->showDropdown = true;
+                return true;
             }
-            return true;
+            return false;
         }
         if (event == Event::ArrowUp) {
-            searchState->selectedIndex = std::max(searchState->selectedIndex - 1, 0);
-            return true;
+            if (searchState->showDropdown && !results.empty()) {
+                searchState->selectedIndex = std::max(searchState->selectedIndex - 1, 0);
+                return true;
+            }
+            return false;
         }
         
         // 回车确认选择
@@ -57,17 +60,7 @@ Component SearchBoxComponent(
             }
         }
         
-        // Tab 补全第一个结果
-        if (event == Event::Tab) {
-            if (!results.empty()) {
-                searchState->input = results[0];
-                searchState->showDropdown = false;
-                if (onSelect) {
-                    onSelect(results[0]);
-                }
-                return true;
-            }
-        }
+        // Tab 留给外层做板块切换，不在搜索框内部消耗。
         
         // Escape 关闭下拉
         if (event == Event::Escape) {

@@ -119,6 +119,9 @@ void ClientState::clearPositions() {
 void ClientState::addOrder(const OrderInfo& order) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (orders_.find(order.clOrdID) == orders_.end()) {
+            orderSequence_.push_back(order.clOrdID);
+        }
         orders_[order.clOrdID] = order;
     }
     notifyStateChange();
@@ -127,6 +130,9 @@ void ClientState::addOrder(const OrderInfo& order) {
 void ClientState::updateOrder(const std::string& clOrdID, const OrderInfo& order) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (orders_.find(clOrdID) == orders_.end()) {
+            orderSequence_.push_back(clOrdID);
+        }
         orders_[clOrdID] = order;
     }
     notifyStateChange();
@@ -135,9 +141,12 @@ void ClientState::updateOrder(const std::string& clOrdID, const OrderInfo& order
 std::vector<OrderInfo> ClientState::getOrders() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<OrderInfo> result;
-    result.reserve(orders_.size());
-    for (const auto& [_, order] : orders_) {
-        result.push_back(order);
+    result.reserve(orderSequence_.size());
+    for (const auto& clOrdID : orderSequence_) {
+        auto it = orders_.find(clOrdID);
+        if (it != orders_.end()) {
+            result.push_back(it->second);
+        }
     }
     return result;
 }
@@ -145,7 +154,13 @@ std::vector<OrderInfo> ClientState::getOrders() const {
 std::vector<OrderInfo> ClientState::getActiveOrders() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<OrderInfo> result;
-    for (const auto& [_, order] : orders_) {
+    result.reserve(orderSequence_.size());
+    for (const auto& clOrdID : orderSequence_) {
+        auto it = orders_.find(clOrdID);
+        if (it == orders_.end()) {
+            continue;
+        }
+        const auto& order = it->second;
         if (order.state == OrderState::PENDING_NEW ||
             order.state == OrderState::NEW ||
             order.state == OrderState::PARTIALLY_FILLED) {
@@ -159,6 +174,7 @@ void ClientState::clearOrders() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         orders_.clear();
+        orderSequence_.clear();
     }
     notifyStateChange();
 }
@@ -179,7 +195,12 @@ void ClientState::saveOrders(const std::string& filepath) {
     if (!ofs) return;
     
     // 简单的文本格式：每行一个订单，字段用 | 分隔
-    for (const auto& [_, order] : orders_) {
+    for (const auto& clOrdID : orderSequence_) {
+        auto it = orders_.find(clOrdID);
+        if (it == orders_.end()) {
+            continue;
+        }
+        const auto& order = it->second;
         ofs << order.clOrdID << "|"
             << order.orderId << "|"
             << order.symbol << "|"
@@ -202,6 +223,7 @@ void ClientState::loadOrders(const std::string& filepath) {
     
     std::lock_guard<std::mutex> lock(mutex_);
     orders_.clear();
+    orderSequence_.clear();
     
     std::string line;
     while (std::getline(ifs, line)) {
@@ -230,11 +252,18 @@ void ClientState::loadOrders(const std::string& filepath) {
                 if (fields.size() > 9) order.text = fields[9];
                 if (fields.size() > 10) order.updateTime = fields[10];
                 orders_[order.clOrdID] = order;
+                orderSequence_.push_back(order.clOrdID);
             } catch (...) {
                 // 解析失败，跳过该条目
             }
         }
     }
+
+    // 旧版本保存顺序来自 unordered_map，可能是“随机”的。
+    // 这里按 clOrdID 做一次稳定排序，至少能让展示顺序可预测（也更接近下单序号）。
+    std::sort(orderSequence_.begin(), orderSequence_.end());
+    orderSequence_.erase(std::unique(orderSequence_.begin(), orderSequence_.end()),
+                         orderSequence_.end());
 }
 
 // ============================================================================

@@ -10,6 +10,7 @@
 #include "components/position_panel.hpp"
 #include "components/order_panel.hpp"
 #include "components/search_box.hpp"
+#include "components/message_panel.hpp"
 
 namespace fix40::client::tui {
 
@@ -20,7 +21,9 @@ TuiApp::TuiApp(std::shared_ptr<ClientState> state, std::shared_ptr<ClientApp> ap
     , app_(std::move(app))
     , screen_(ScreenInteractive::Fullscreen())
     , orderPanelState_(std::make_shared<OrderPanelState>())
-    , searchBoxState_(std::make_shared<SearchBoxState>()) {
+    , orderListState_(std::make_shared<OrderListState>())
+    , searchBoxState_(std::make_shared<SearchBoxState>())
+    , messagePanelState_(std::make_shared<MessagePanelState>()) {
     
     // 设置状态变更回调，刷新界面
     state_->setOnStateChange([this] {
@@ -44,12 +47,16 @@ void TuiApp::refresh() {
 Component TuiApp::createMainComponent() {
     // 下单面板
     auto orderPanel = OrderPanelComponent(orderPanelState_, app_, state_);
+    auto orderList = OrderListComponent(orderListState_, state_);
     
     // 合约搜索框
     auto searchBox = SearchBoxComponent(searchBoxState_, app_, state_, 
         [this](const std::string& symbol) {
             orderPanelState_->symbol = symbol;
         });
+
+    // 消息面板
+    auto messagePanel = MessagePanelComponent(messagePanelState_, state_);
     
     // 刷新按钮
     auto refreshButton = Button("刷新 [F5]", [this] {
@@ -62,20 +69,83 @@ Component TuiApp::createMainComponent() {
         requestExit();
     });
     
-    // 主容器 - 使用水平布局让焦点可以在不同区域切换
-    auto container = Container::Horizontal({
-        Container::Vertical({
-            searchBox,
-            orderPanel,
-        }),
-        Container::Horizontal({
-            refreshButton,
-            exitButton,
-        }),
+    // 板块级焦点顺序（Tab 循环）：
+    // 搜索 -> 下单 -> 订单 -> 消息 -> 刷新 -> 退出
+    std::vector<Component> panels = {
+        searchBox,
+        orderPanel,
+        orderList,
+        messagePanel,
+        refreshButton,
+        exitButton,
+    };
+
+    auto panelContainer = Container::Vertical(panels);
+
+    // 强制 Tab 只用于“板块切换”，避免被面板内部组件（如表单）吞掉。
+    // 同时屏蔽容器自身的箭头/vi 风格导航，保证焦点不会被 ↑/↓ 等改变。
+    auto focusManager = CatchEvent(panelContainer, [panelContainer, panels](Event event) {
+        auto active = panelContainer->ActiveChild();
+
+        auto index_of_active = [&]() -> int {
+            if (!active) return 0;
+            for (int i = 0; i < static_cast<int>(panels.size()); ++i) {
+                if (panels[i].get() == active.get()) {
+                    return i;
+                }
+            }
+            return 0;
+        };
+
+        auto focus_next = [&](int dir) {
+            if (panels.empty()) return;
+            int cur = index_of_active();
+            for (int offset = 1; offset <= static_cast<int>(panels.size()); ++offset) {
+                int next = (cur + offset * dir + static_cast<int>(panels.size())) %
+                           static_cast<int>(panels.size());
+                if (panels[next]->Focusable()) {
+                    panels[next]->TakeFocus();
+                    return;
+                }
+            }
+        };
+
+        if (event == Event::Tab) {
+            focus_next(+1);
+            return true;
+        }
+        if (event == Event::TabReverse) {
+            focus_next(-1);
+            return true;
+        }
+
+        auto forward_or_swallow = [&]() -> bool {
+            if (active && active->OnEvent(event)) {
+                return true;
+            }
+            return true; // 不让容器用这些按键改焦点
+        };
+
+        if (event == Event::ArrowUp || event == Event::ArrowDown ||
+            event == Event::ArrowLeft || event == Event::ArrowRight ||
+            event == Event::PageUp || event == Event::PageDown ||
+            event == Event::Home || event == Event::End) {
+            return forward_or_swallow();
+        }
+
+        if (event.is_character()) {
+            const auto c = event.character();
+            if (c == "h" || c == "j" || c == "k" || c == "l" ||
+                c == "H" || c == "J" || c == "K" || c == "L") {
+                return forward_or_swallow();
+            }
+        }
+
+        return false;
     });
     
     // 添加全局快捷键
-    auto withShortcuts = CatchEvent(container, [this](Event event) {
+    auto withShortcuts = CatchEvent(focusManager, [this](Event event) {
         // Q 或 Escape 退出
         if (event == Event::Character('q') || event == Event::Character('Q')) {
             requestExit();
@@ -93,6 +163,11 @@ Component TuiApp::createMainComponent() {
     return Renderer(withShortcuts, [=] {
         // 顶部状态栏
         auto header = HeaderComponent(state_);
+
+        // 搜索框失焦时自动收起下拉列表，避免遮挡其他板块。
+        if (!searchBox->Focused() && searchBoxState_) {
+            searchBoxState_->showDropdown = false;
+        }
         
         // 左侧面板：账户 + 持仓
         auto leftPanel = vbox({
@@ -104,19 +179,12 @@ Component TuiApp::createMainComponent() {
         auto centerPanel = vbox({
             styledBorder(searchBox->Render(), " 合约搜索 "),
             styledBorder(orderPanel->Render(), " 下单 "),
-            styledBorder(OrderListComponent(state_), " 订单 ") | flex,
+            styledBorder(orderList->Render(), " 订单 ") | flex,
         }) | size(WIDTH, EQUAL, 42);
         
         // 右侧面板：消息日志
-        auto messages = state_->getMessages();
-        Elements msgElements;
-        // 显示最近的消息（从下往上）
-        size_t start = messages.size() > 20 ? messages.size() - 20 : 0;
-        for (size_t i = start; i < messages.size(); ++i) {
-            msgElements.push_back(text(messages[i]) | dim);
-        }
         auto rightPanel = vbox({
-            styledBorder(vbox(std::move(msgElements)) | vscroll_indicator | frame | flex, " 消息 "),
+            styledBorder(messagePanel->Render(), " 消息 ") | flex,
         }) | flex;
         
         // 底部工具栏（移除未实现的 Tab 按钮）
