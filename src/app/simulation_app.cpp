@@ -282,6 +282,10 @@ void SimulationApp::fromApp(const FixMessage& msg, const SessionID& sessionID) {
         // 注意：合约搜索不需要用户身份验证
         handleInstrumentSearch(msg, sessionID);
     }
+    else if (msgType == "U9") {
+        // OrderHistoryQueryRequest - 订单历史查询（自定义）
+        handleOrderHistoryQuery(msg, sessionID, userId);
+    }
     else {
         // 未知消息类型
         LOG() << "[SimulationApp] Unknown message type: " << msgType;
@@ -1043,6 +1047,91 @@ void SimulationApp::handleInstrumentSearch(const FixMessage& msg, const SessionI
               << sessionID.to_string();
     } else {
         LOG() << "[SimulationApp] Sent instrument search response: " << results.size() << " results";
+    }
+}
+
+void SimulationApp::handleOrderHistoryQuery(const FixMessage& msg, const SessionID& sessionID, const std::string& userId) {
+    LOG() << "[SimulationApp] Processing order history query for user: " << userId;
+
+    if (!store_) {
+        // 未启用持久化时，返回空列表（best effort）
+        FixMessage response;
+        response.set(tags::MsgType, "U10");
+        if (msg.has(tags::RequestID)) {
+            response.set(tags::RequestID, msg.get_string(tags::RequestID));
+        }
+        response.set(tags::Text, "");
+        sessionManager_.sendMessage(sessionID, response);
+        return;
+    }
+
+    std::vector<Order> orders;
+    if (msg.has(tags::Symbol) && !msg.get_string(tags::Symbol).empty()) {
+        orders = store_->loadOrdersBySymbol(msg.get_string(tags::Symbol));
+    } else {
+        orders = store_->loadAllOrders();
+    }
+
+    // 安全隔离：仅返回属于该用户的订单。
+    // 目前 client 的 ClOrdID 生成规则为 "userId-xxxxxx"，因此用前缀过滤。
+    const std::string prefix = userId.empty() ? "" : (userId + "-");
+    if (!prefix.empty()) {
+        std::vector<Order> filtered;
+        filtered.reserve(orders.size());
+        for (const auto& o : orders) {
+            if (o.clOrdID.rfind(prefix, 0) == 0) {
+                filtered.push_back(o);
+            }
+        }
+        orders = std::move(filtered);
+    }
+
+    auto toClientOrderState = [](OrderStatus status) -> int {
+        // client::OrderState: PENDING_NEW=0, NEW=1, PARTIALLY_FILLED=2, FILLED=3, CANCELED=4, REJECTED=5
+        switch (status) {
+            case OrderStatus::PENDING_NEW: return 0;
+            case OrderStatus::NEW: return 1;
+            case OrderStatus::PARTIALLY_FILLED: return 2;
+            case OrderStatus::FILLED: return 3;
+            case OrderStatus::CANCELED: return 4;
+            case OrderStatus::REJECTED: return 5;
+            default: return 0;
+        }
+    };
+
+    auto toSideString = [](OrderSide side) -> const char* {
+        return side == OrderSide::BUY ? "BUY" : "SELL";
+    };
+
+    // 序列化格式与 client 本地文件保存格式对齐：每行一个订单，字段用 '|' 分隔。
+    // clOrdID|orderId|symbol|side|price|orderQty|filledQty|avgPx|state|text|updateTime
+    std::ostringstream text;
+    text << std::fixed << std::setprecision(6);
+    for (const auto& o : orders) {
+        text << o.clOrdID << "|"
+             << o.orderID << "|"
+             << o.symbol << "|"
+             << toSideString(o.side) << "|"
+             << o.price << "|"
+             << o.orderQty << "|"
+             << o.cumQty << "|"
+             << o.avgPx << "|"
+             << toClientOrderState(o.status) << "|"
+             << "" << "|"
+             << ""
+             << "\n";
+    }
+
+    FixMessage response;
+    response.set(tags::MsgType, "U10");
+    if (msg.has(tags::RequestID)) {
+        response.set(tags::RequestID, msg.get_string(tags::RequestID));
+    }
+    response.set(tags::Account, userId);
+    response.set(tags::Text, text.str());
+
+    if (!sessionManager_.sendMessage(sessionID, response)) {
+        LOG() << "[SimulationApp] Failed to send order history response to " << sessionID.to_string();
     }
 }
 

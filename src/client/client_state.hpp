@@ -137,6 +137,16 @@ public:
     std::vector<OrderInfo> getOrders() const;
     std::vector<OrderInfo> getActiveOrders() const;
     void clearOrders();
+
+    /**
+     * @brief 批量设置订单列表
+     *
+     * 用于“从服务端持久化历史刷新订单列表”等场景：
+     * 一次性替换内部订单容器并只触发一次 notifyStateChange()，避免逐条 addOrder 导致的频繁刷新。
+     *
+     * @param orders 新的订单列表（按希望展示的顺序排列）
+     */
+    void setOrders(const std::vector<OrderInfo>& orders);
     
     /**
      * @brief 保存订单到文件

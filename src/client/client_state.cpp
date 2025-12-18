@@ -179,6 +179,23 @@ void ClientState::clearOrders() {
     notifyStateChange();
 }
 
+void ClientState::setOrders(const std::vector<OrderInfo>& orders) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        orders_.clear();
+        orderSequence_.clear();
+        orderSequence_.reserve(orders.size());
+        for (const auto& order : orders) {
+            if (order.clOrdID.empty()) {
+                continue;
+            }
+            orderSequence_.push_back(order.clOrdID);
+            orders_[order.clOrdID] = order;
+        }
+    }
+    notifyStateChange();
+}
+
 static std::string getDefaultOrdersPath() {
     const char* home = std::getenv("HOME");
     if (home) {

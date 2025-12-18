@@ -29,6 +29,7 @@ namespace fix40::client {
  * - 账户推送 (U5)
  * - 持仓推送 (U6)
  * - 合约搜索响应 (U8)
+ * - 订单历史查询响应 (U10)
  */
 class ClientApp : public Application {
 public:
@@ -91,6 +92,13 @@ public:
     void queryPositions();
 
     /**
+     * @brief 查询订单历史（服务端持久化）
+     *
+     * 发送 U9 请求，服务端返回 U10 响应（Text 字段为序列化订单列表）。
+     */
+    void queryOrderHistory();
+
+    /**
      * @brief 搜索合约
      * @param pattern 搜索前缀
      * @param maxResults 最大返回数量
@@ -110,6 +118,7 @@ private:
     void handleAccountUpdate(const FixMessage& msg);
     void handlePositionUpdate(const FixMessage& msg);
     void handleInstrumentSearchResponse(const FixMessage& msg);
+    void handleOrderHistoryResponse(const FixMessage& msg);
 
     // 生成客户端订单ID
     std::string generateClOrdID();
