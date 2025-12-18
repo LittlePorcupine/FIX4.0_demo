@@ -93,6 +93,7 @@ TEST_CASE("SqliteStore - 基本功能", "[storage]") {
     SECTION("订单更新") {
         Order order;
         order.clOrdID = "ORD002";
+        order.orderID = "";
         order.symbol = "IF2601";
         order.side = OrderSide::SELL;
         order.ordType = OrderType::LIMIT;
@@ -105,6 +106,8 @@ TEST_CASE("SqliteStore - 基本功能", "[storage]") {
 
         REQUIRE(store.saveOrder(order));
 
+        // 模拟撮合引擎在后续回报中补充 orderID
+        order.orderID = "SRV002";
         order.cumQty = 3;
         order.leavesQty = 2;
         order.avgPx = 4510.0;
@@ -113,6 +116,7 @@ TEST_CASE("SqliteStore - 基本功能", "[storage]") {
 
         auto loaded = store.loadOrder("ORD002");
         REQUIRE(loaded.has_value());
+        REQUIRE(loaded->orderID == "SRV002");
         REQUIRE(loaded->cumQty == 3);
         REQUIRE(loaded->leavesQty == 2);
         REQUIRE(loaded->status == OrderStatus::PARTIALLY_FILLED);
