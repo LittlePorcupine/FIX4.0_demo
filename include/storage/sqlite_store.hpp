@@ -40,9 +40,11 @@ public:
 
     // IStore 接口实现
     bool saveOrder(const Order& order) override;
+    bool saveOrderForAccount(const Order& order, const std::string& accountId) override;
     bool updateOrder(const Order& order) override;
     std::optional<Order> loadOrder(const std::string& clOrdID) override;
     std::vector<Order> loadOrdersBySymbol(const std::string& symbol) override;
+    std::vector<Order> loadOrdersByAccount(const std::string& accountId) override;
     std::vector<Order> loadActiveOrders() override;
     std::vector<Order> loadAllOrders() override;
 

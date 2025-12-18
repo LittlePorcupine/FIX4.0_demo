@@ -66,10 +66,27 @@ public:
     // 订单存储
     // =========================================================================
     
+    /**
+     * @brief 保存订单（不包含订单归属信息）
+     *
+     * 该接口兼容旧代码路径与测试；在需要按用户隔离查询订单历史的场景，
+     * 应优先使用 saveOrderForAccount() 写入 accountId 并使用 loadOrdersByAccount() 查询。
+     */
     virtual bool saveOrder(const Order& order) = 0;
+
+    /**
+     * @brief 保存订单并记录订单归属账户
+     *
+     * @param order 订单对象
+     * @param accountId 订单所属账户（由服务端基于 Session 身份绑定得出，不应由客户端消息提供）
+     * @return 保存成功返回 true，失败返回 false
+     */
+    virtual bool saveOrderForAccount(const Order& order, const std::string& accountId) = 0;
+
     virtual bool updateOrder(const Order& order) = 0;
     virtual std::optional<Order> loadOrder(const std::string& clOrdID) = 0;
     virtual std::vector<Order> loadOrdersBySymbol(const std::string& symbol) = 0;
+    virtual std::vector<Order> loadOrdersByAccount(const std::string& accountId) = 0;
     virtual std::vector<Order> loadActiveOrders() = 0;
     virtual std::vector<Order> loadAllOrders() = 0;
 

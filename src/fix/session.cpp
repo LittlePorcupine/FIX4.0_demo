@@ -23,6 +23,12 @@
 
 namespace fix40 {
 
+namespace {
+
+constexpr const char* kPendingTargetCompID = "PENDING";
+
+} // namespace
+
 // =================================================================================
 // 状态类声明
 // =================================================================================
@@ -149,8 +155,7 @@ Session::Session(const std::string& sender,
         // 服务端 accept 阶段使用占位 TargetCompID（例如 "PENDING"）创建 Session，
         // 此时真实客户端 CompID 尚未知晓，不能用占位 key 恢复序列号。
         // 待收到 Logon 并完成身份绑定后再恢复，避免错误读取或写入 session_states。
-        const bool is_server_pending_target = (senderCompID == "SERVER" && targetCompID == "PENDING");
-        if (!is_server_pending_target) {
+        if (targetCompID != kPendingTargetCompID) {
             restore_session_state();
         }
     }
@@ -273,7 +278,7 @@ void Session::on_message_received(const FixMessage& msg) {
     // Logon 属于会话层握手消息：在 Disconnected 阶段不做严格的序列号校验，
     // 以便服务端在解析出真实客户端 CompID 后，从持久化存储恢复正确的 recvSeqNum/sendSeqNum。
     // 否则重连时客户端可能发送较大的 MsgSeqNum（按上次会话继续），会被误判为 gap 并断开。
-    if (msg_type == "A" && std::string(currentState_->getStateName()) == "Disconnected") {
+    if (msg_type == "A" && dynamic_cast<DisconnectedState*>(currentState_.get()) != nullptr) {
         currentState_->onMessageReceived(*this, msg);
         return;
     }

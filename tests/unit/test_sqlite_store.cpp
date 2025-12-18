@@ -162,6 +162,33 @@ TEST_CASE("SqliteStore - 基本功能", "[storage]") {
         REQUIRE(icOrders.size() == 1);
     }
 
+    SECTION("按账户加载订单") {
+        Order order1, order2;
+        order1.clOrdID = "ACC_ORD_1";
+        order1.symbol = "IF2601";
+        order1.side = OrderSide::BUY;
+        order1.ordType = OrderType::LIMIT;
+        order1.timeInForce = TimeInForce::DAY;
+        order1.price = 4500.0;
+        order1.orderQty = 10;
+        order1.status = OrderStatus::NEW;
+
+        order2 = order1;
+        order2.clOrdID = "ACC_ORD_2";
+        order2.symbol = "IC2601";
+
+        REQUIRE(store.saveOrderForAccount(order1, "userA"));
+        REQUIRE(store.saveOrderForAccount(order2, "userB"));
+
+        auto userAOrders = store.loadOrdersByAccount("userA");
+        REQUIRE(userAOrders.size() == 1);
+        REQUIRE(userAOrders[0].clOrdID == "ACC_ORD_1");
+
+        auto userBOrders = store.loadOrdersByAccount("userB");
+        REQUIRE(userBOrders.size() == 1);
+        REQUIRE(userBOrders[0].clOrdID == "ACC_ORD_2");
+    }
+
     SECTION("加载活跃订单") {
         Order active, filled, canceled;
         

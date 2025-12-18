@@ -208,7 +208,7 @@ public:
      *
      * 该指针用于账户/持仓等数据的持久化与重启恢复。
      */
-    IStore* getStore() const { return store_; }
+    IStore* getStore() const override { return store_; }
 
     // =========================================================================
     // 管理器访问接口

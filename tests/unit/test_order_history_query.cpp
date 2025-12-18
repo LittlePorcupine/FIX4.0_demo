@@ -21,7 +21,7 @@ TEST_CASE("SimulationApp - order history query (U9/U10)", "[application][storage
 
     // 写入两笔订单：一笔属于 CLIENT1，一笔属于 CLIENT2（应被过滤）
     Order o1;
-    o1.clOrdID = "CLIENT1-000001";
+    o1.clOrdID = "ORD-1";
     o1.orderID = "ORD-0000000001";
     o1.symbol = "IF2601";
     o1.side = OrderSide::BUY;
@@ -33,12 +33,12 @@ TEST_CASE("SimulationApp - order history query (U9/U10)", "[application][storage
     o1.leavesQty = 1;
     o1.avgPx = 4499.5;
     o1.status = OrderStatus::PARTIALLY_FILLED;
-    REQUIRE(store.saveOrder(o1));
+    REQUIRE(store.saveOrderForAccount(o1, "CLIENT1"));
 
     Order o2 = o1;
-    o2.clOrdID = "CLIENT2-000001";
+    o2.clOrdID = "ORD-2";
     o2.orderID = "ORD-0000000002";
-    REQUIRE(store.saveOrder(o2));
+    REQUIRE(store.saveOrderForAccount(o2, "CLIENT2"));
 
     // 发起订单历史查询
     FixMessage req;
@@ -62,8 +62,8 @@ TEST_CASE("SimulationApp - order history query (U9/U10)", "[application][storage
         REQUIRE(decoded.has(tags::Text));
 
         const std::string payload = decoded.get_string(tags::Text);
-        REQUIRE(payload.find("CLIENT1-000001|") != std::string::npos);
-        REQUIRE(payload.find("CLIENT2-000001|") == std::string::npos);
+        REQUIRE(payload.find("ORD-1|") != std::string::npos);
+        REQUIRE(payload.find("ORD-2|") == std::string::npos);
     }
 
     REQUIRE(found);

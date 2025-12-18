@@ -145,6 +145,8 @@ public:
      * 一次性替换内部订单容器并只触发一次 notifyStateChange()，避免逐条 addOrder 导致的频繁刷新。
      *
      * @param orders 新的订单列表（按希望展示的顺序排列）
+     *
+     * @note clOrdID 为空的订单会被忽略（静默跳过）。
      */
     void setOrders(const std::vector<OrderInfo>& orders);
     

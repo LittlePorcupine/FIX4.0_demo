@@ -461,7 +461,8 @@ void ClientApp::handleOrderHistoryResponse(const FixMessage& msg) {
     // clOrdID|orderId|symbol|side|price|orderQty|filledQty|avgPx|state|text|updateTime
     if (!msg.has(tags::Text)) {
         state_->clearOrders();
-        state_->addMessage("订单历史为空");
+        state_->setLastError("订单历史响应格式无效：缺少 Text 字段");
+        state_->addMessage("订单历史响应格式无效");
         return;
     }
 
@@ -486,6 +487,9 @@ void ClientApp::handleOrderHistoryResponse(const FixMessage& msg) {
             fields.push_back(field);
         }
 
+        // 协议/格式兼容策略：
+        // - 至少需要到 state 字段（第 9 个字段）才能构造 OrderInfo；
+        // - 如未来服务端增加字段，客户端忽略多余字段以保持兼容性。
         if (fields.size() < 9) {
             continue;
         }

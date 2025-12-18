@@ -20,6 +20,7 @@
 #include <iomanip>
 #include <set>
 #include <optional>
+#include <algorithm>
 
 namespace fix40 {
 
@@ -571,7 +572,7 @@ void SimulationApp::handleNewOrderSingle(const FixMessage& msg, const SessionID&
     // 将订单的初始状态写入存储（通常为 PENDING_NEW）。
     // 后续状态变化由 onExecutionReport() 驱动 updateOrder() 完成。
     if (store_) {
-        if (!store_->saveOrder(order)) {
+        if (!store_->saveOrderForAccount(order, userId)) {
             LOG() << "[SimulationApp] Warning: Failed to persist new order: ClOrdID="
                   << order.clOrdID;
         }
@@ -1065,25 +1066,15 @@ void SimulationApp::handleOrderHistoryQuery(const FixMessage& msg, const Session
         return;
     }
 
-    std::vector<Order> orders;
+    std::vector<Order> orders = store_->loadOrdersByAccount(userId);
     if (msg.has(tags::Symbol) && !msg.get_string(tags::Symbol).empty()) {
-        orders = store_->loadOrdersBySymbol(msg.get_string(tags::Symbol));
-    } else {
-        orders = store_->loadAllOrders();
-    }
-
-    // 安全隔离：仅返回属于该用户的订单。
-    // 目前 client 的 ClOrdID 生成规则为 "userId-xxxxxx"，因此用前缀过滤。
-    const std::string prefix = userId.empty() ? "" : (userId + "-");
-    if (!prefix.empty()) {
-        std::vector<Order> filtered;
-        filtered.reserve(orders.size());
-        for (const auto& o : orders) {
-            if (o.clOrdID.rfind(prefix, 0) == 0) {
-                filtered.push_back(o);
-            }
-        }
-        orders = std::move(filtered);
+        const std::string symbol = msg.get_string(tags::Symbol);
+        orders.erase(
+            std::remove_if(
+                orders.begin(),
+                orders.end(),
+                [&](const Order& o) { return o.symbol != symbol; }),
+            orders.end());
     }
 
     auto toClientOrderState = [](OrderStatus status) -> int {
@@ -1117,8 +1108,8 @@ void SimulationApp::handleOrderHistoryQuery(const FixMessage& msg, const Session
              << o.cumQty << "|"
              << o.avgPx << "|"
              << toClientOrderState(o.status) << "|"
-             << "" << "|"
-             << ""
+             << "-" << "|"
+             << "-"
              << "\n";
     }
 
