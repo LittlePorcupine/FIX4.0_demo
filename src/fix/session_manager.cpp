@@ -83,8 +83,17 @@ bool SessionManager::hasSession(const SessionID& sessionID) const {
 
 void SessionManager::forEachSession(
     std::function<void(const SessionID&, std::shared_ptr<Session>)> callback) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& [id, session] : sessions_) {
+    std::vector<std::pair<SessionID, std::shared_ptr<Session>>> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        snapshot.reserve(sessions_.size());
+        for (const auto& [id, session] : sessions_) {
+            snapshot.push_back({id, session});
+        }
+    }
+
+    // 解锁后执行回调，避免回调内重入 SessionManager（例如 sendMessage/unregister）导致死锁。
+    for (const auto& [id, session] : snapshot) {
         callback(id, session);
     }
 }

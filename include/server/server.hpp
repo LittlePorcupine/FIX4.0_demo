@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <string>
 #include <mutex>
+#include <csignal>
 
 namespace fix40 {
 
@@ -100,6 +101,9 @@ private:
     std::mutex connections_mutex_; ///< 保护 connections_ 的互斥锁
 
     static FixServer* instance_for_signal_; ///< 信号处理用的静态实例指针
+    static volatile std::sig_atomic_t last_signal_; ///< 最近一次收到的信号编号（仅用于信号回调传递）
+
+    int signal_pipe_[2] = {-1, -1}; ///< self-pipe: [0]=read end, [1]=write end
 
     Application* application_ = nullptr;  ///< 应用层处理器指针
 };

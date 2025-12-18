@@ -13,6 +13,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <fcntl.h>
+#include <cerrno>
 
 #include "core/reactor.hpp"
 #include "base/thread_pool.hpp"
@@ -26,11 +27,15 @@ namespace fix40 {
 
 // 初始化静态指针
 FixServer* FixServer::instance_for_signal_ = nullptr;
+volatile std::sig_atomic_t FixServer::last_signal_ = 0;
 
 void FixServer::signal_handler(int signum) {
-    LOG() << "\nCaught signal " << signum << ". Shutting down gracefully...";
-    if (instance_for_signal_ && instance_for_signal_->reactor_) {
-        instance_for_signal_->reactor_->stop();
+    // async-signal-safe: 只做最小操作（记录信号 + write self-pipe）
+    last_signal_ = signum;
+    if (instance_for_signal_ && instance_for_signal_->signal_pipe_[1] != -1) {
+        uint8_t b = 1;
+        ssize_t n = ::write(instance_for_signal_->signal_pipe_[1], &b, sizeof(b));
+        (void)n;
     }
 }
 
@@ -46,6 +51,13 @@ FixServer::FixServer(int port, int num_threads, Application* app)
     );
 
     instance_for_signal_ = this;
+
+    // self-pipe: 用于将 SIGINT/SIGTERM 从信号处理器安全地转发到 Reactor 线程
+    if (pipe(signal_pipe_) != 0) {
+        throw std::runtime_error("Failed to create signal pipe");
+    }
+    fcntl(signal_pipe_[0], F_SETFL, O_NONBLOCK);
+    fcntl(signal_pipe_[1], F_SETFL, O_NONBLOCK);
 
     // 设置驱动时钟轮的主定时器
     reactor_->add_timer(config.get_int("timing_wheel", "tick_interval_ms", 1000), [this]([[maybe_unused]] int timer_fd) {
@@ -90,14 +102,42 @@ FixServer::~FixServer() {
     if (reactor_ && reactor_->is_running()) {
         reactor_->stop();
     }
+    if (signal_pipe_[0] != -1) close(signal_pipe_[0]);
+    if (signal_pipe_[1] != -1) close(signal_pipe_[1]);
     close(listen_fd_);
     instance_for_signal_ = nullptr;
     LOG() << "FixServer destroyed.";
 }
 
 void FixServer::start() {
-    signal(SIGINT, FixServer::signal_handler);
-    signal(SIGTERM, FixServer::signal_handler);
+    // 使用 sigaction 安装信号处理器（避免 signal 的实现差异）
+    struct sigaction sa {};
+    sa.sa_handler = FixServer::signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+
+    // 在 Reactor 线程里处理信号：drain pipe -> stop reactor（线程安全）
+    reactor_->add_fd(signal_pipe_[0], [this](int fd) {
+        uint8_t buf[128];
+        while (true) {
+            ssize_t n = ::read(fd, buf, sizeof(buf));
+            if (n > 0) {
+                continue;
+            }
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                break;
+            }
+            break;
+        }
+
+        const int signum = static_cast<int>(last_signal_);
+        LOG() << "\nCaught signal " << signum << ". Shutting down gracefully...";
+        if (reactor_) {
+            reactor_->stop();
+        }
+    });
 
     // 将服务器端口 fd 添入 reactor 以接受新连接
     reactor_->add_fd(listen_fd_, [this](int) {
@@ -125,6 +165,7 @@ void FixServer::start() {
     // --- 优雅关闭逻辑 ---
     LOG() << "Reactor stopped. Closing listener and shutting down sessions...";
     reactor_->remove_fd(listen_fd_);
+    reactor_->remove_fd(signal_pipe_[0]);
 
     // 安全地获取将要关闭的连接
     std::vector<std::shared_ptr<Connection>> conns_to_shutdown;

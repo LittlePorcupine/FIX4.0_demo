@@ -84,6 +84,21 @@ TEST_CASE("SessionManager - Basic operations", "[session_manager]") {
         
         REQUIRE(count == 2);
     }
+
+    SECTION("forEachSession callback can re-enter SessionManager without deadlock") {
+        auto session1 = std::make_shared<Session>("CLIENT1", "SERVER", 30, [](){});
+        auto session2 = std::make_shared<Session>("CLIENT2", "SERVER", 30, [](){});
+
+        manager.registerSession(session1);
+        manager.registerSession(session2);
+
+        // 之前实现会持锁调用 callback，这里在 callback 内调用 unregister 会发生死锁。
+        manager.forEachSession([&](const SessionID& id, std::shared_ptr<Session>) {
+            manager.unregisterSession(id);
+        });
+
+        REQUIRE(manager.getSessionCount() == 0);
+    }
 }
 
 TEST_CASE("SessionManager - sendMessage", "[session_manager]") {
