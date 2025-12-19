@@ -47,7 +47,7 @@ void TuiApp::refresh() {
 Component TuiApp::createMainComponent() {
     // 下单面板
     auto orderPanel = OrderPanelComponent(orderPanelState_, app_, state_);
-    auto orderList = OrderListComponent(orderListState_, state_);
+    auto orderList = OrderListComponent(orderListState_, app_, state_);
     
     // 合约搜索框
     auto searchBox = SearchBoxComponent(searchBoxState_, app_, state_, 
@@ -85,7 +85,14 @@ Component TuiApp::createMainComponent() {
 
     // 强制 Tab 只用于“板块切换”，避免被面板内部组件（如表单）吞掉。
     // 同时屏蔽容器自身的箭头/vi 风格导航，保证焦点不会被 ↑/↓ 等改变。
-    auto focusManager = CatchEvent(panelContainer, [panelContainer, panels](Event event) {
+    auto focusManager = CatchEvent(panelContainer, [this, panelContainer, panels](Event event) {
+        // 订单撤单确认弹窗打开时，锁定焦点在订单栏，避免 Tab 切走导致弹窗“悬挂”。
+        if (orderListState_ && orderListState_->showCancelDialog) {
+            if (event == Event::Tab || event == Event::TabReverse) {
+                return true;
+            }
+        }
+
         auto active = panelContainer->ActiveChild();
 
         auto index_of_active = [&]() -> int {

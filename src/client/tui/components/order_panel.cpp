@@ -18,17 +18,57 @@ static int clampIndex(int value, int size) {
 
 Component OrderListComponent(
     std::shared_ptr<OrderListState> listState,
+    std::shared_ptr<ClientApp> app,
     const std::shared_ptr<ClientState>& state) {
 
-    auto base = Renderer([=](bool /*focused*/) -> Element {
+    auto getView = [state]() -> std::vector<OrderInfo> {
         auto orders = state->getOrders();
-
-        // 最新在前（顶部）
         std::vector<OrderInfo> view;
         view.reserve(orders.size());
         for (auto it = orders.rbegin(); it != orders.rend(); ++it) {
             view.push_back(*it);
         }
+        return view;
+    };
+
+    auto getOrderById = [=](const std::string& clOrdID) -> std::optional<OrderInfo> {
+        if (clOrdID.empty()) {
+            return std::nullopt;
+        }
+        auto view = getView();
+        for (const auto& o : view) {
+            if (o.clOrdID == clOrdID) {
+                return o;
+            }
+        }
+        return std::nullopt;
+    };
+
+    auto isCancelable = [](const OrderInfo& order) -> bool {
+        // “挂单”语义：订单仍处于活跃状态（可撤），包括：
+        // - 待确：PENDING_NEW
+        // - 挂单：NEW
+        // - 部成：PARTIALLY_FILLED
+        return order.state == OrderState::PENDING_NEW ||
+               order.state == OrderState::NEW ||
+               order.state == OrderState::PARTIALLY_FILLED;
+    };
+
+    auto orderStateText = [](OrderState state) -> std::string {
+        switch (state) {
+            case OrderState::PENDING_NEW: return "待确";
+            case OrderState::NEW: return "挂单";
+            case OrderState::PARTIALLY_FILLED: return "部成";
+            case OrderState::FILLED: return "成交";
+            case OrderState::CANCELED: return "撤销";
+            case OrderState::REJECTED: return "拒绝";
+        }
+        return "未知";
+    };
+
+    auto base = Renderer([=](bool /*focused*/) -> Element {
+        // 最新在前（顶部）
+        std::vector<OrderInfo> view = getView();
 
         const int count = static_cast<int>(view.size());
         if (count == 0) {
@@ -154,19 +194,24 @@ Component OrderListComponent(
     });
 
     auto withEvents = CatchEvent(base, [=](Event event) {
-        auto orders = state->getOrders();
-        const int count = static_cast<int>(orders.size());
-        if (count <= 0) {
+        // 弹窗打开时：
+        // - Esc 关闭弹窗
+        // - 其它事件交给 Modal 内部组件处理（本组件不消费）
+        if (listState->showCancelDialog) {
+            if (event == Event::Escape) {
+                listState->showCancelDialog = false;
+                listState->cancelDialogClOrdID.clear();
+                return true;
+            }
             return false;
         }
 
         // 视图顺序是最新在前，因此 index=0 是最新订单。
-        std::vector<OrderInfo> view;
-        view.reserve(orders.size());
-        for (auto it = orders.rbegin(); it != orders.rend(); ++it) {
-            view.push_back(*it);
-        }
+        std::vector<OrderInfo> view = getView();
         const int viewCount = static_cast<int>(view.size());
+        if (viewCount <= 0) {
+            return false;
+        }
 
         auto move = [&](int delta) {
             listState->selectedIndex = clampIndex(listState->selectedIndex + delta, viewCount);
@@ -201,10 +246,121 @@ Component OrderListComponent(
             listState->selectedClOrdID = view[listState->selectedIndex].clOrdID;
             return true;
         }
+
+        // 回车打开撤单确认弹窗（仅在订单列表有选中项时）。
+        if (event == Event::Return) {
+            if (!listState->selectedClOrdID.empty()) {
+                listState->showCancelDialog = true;
+                listState->cancelDialogClOrdID = listState->selectedClOrdID;
+                return true;
+            }
+        }
         return false;
     });
 
-    return withEvents;
+    // --------------------------
+    // 撤单确认弹窗（Modal）
+    // --------------------------
+
+    auto cancelButtonOption = ButtonOption::Simple();
+    cancelButtonOption.transform = [](const EntryState& s) {
+        auto elem = text(s.label);
+        if (s.focused) elem = elem | bold;
+        if (s.active) elem = elem | inverted;
+        return elem | border;
+    };
+
+    auto closeButton = Button("返回 (Esc)", [=] {
+        listState->showCancelDialog = false;
+        listState->cancelDialogClOrdID.clear();
+    }, cancelButtonOption);
+
+    auto cancelActionEnabled = Button("确认撤单", [=] {
+        auto maybeOrder = getOrderById(listState->cancelDialogClOrdID);
+        if (!maybeOrder.has_value()) {
+            state->setLastError("撤单失败：订单不存在或已被清理");
+            listState->showCancelDialog = false;
+            listState->cancelDialogClOrdID.clear();
+            return;
+        }
+        const auto& order = *maybeOrder;
+        if (!isCancelable(order)) {
+            // 不可撤：不做任何操作（按钮应为灰态时不会走到这里）
+            return;
+        }
+        const std::string side = (order.side == "BUY") ? "1" : "2";
+        app->sendCancelOrder(order.clOrdID, order.symbol, side);
+        listState->showCancelDialog = false;
+        listState->cancelDialogClOrdID.clear();
+    }, cancelButtonOption);
+
+    auto cancelActionDisabled = Renderer([] {
+        return text("确认撤单") | dim | color(Color::GrayDark) | border;
+    });
+
+    auto cancelActionSelector = std::make_shared<int>(0);  // 0=enabled, 1=disabled（由 Renderer 动态决定）
+    auto cancelActionTab = Container::Tab({cancelActionEnabled, cancelActionDisabled}, cancelActionSelector.get());
+
+    auto dialogContainer = Container::Horizontal({
+        cancelActionTab,
+        closeButton,
+    });
+
+    auto dialog = Renderer(dialogContainer, [=] {
+        auto maybeOrder = getOrderById(listState->cancelDialogClOrdID);
+        if (!maybeOrder.has_value()) {
+            *cancelActionSelector = 1;
+            // 订单不在列表里时直接提示并提供返回。
+            return window(
+                text(" 撤单 ") | bold,
+                vbox({
+                    text("订单已不存在或已被刷新移除") | color(Color::Red),
+                    separator(),
+                    hbox({cancelActionTab->Render(), filler(), closeButton->Render()}),
+                }) | size(WIDTH, GREATER_THAN, 40));
+        }
+
+        const auto& order = *maybeOrder;
+        const bool canCancel = isCancelable(order);
+        *cancelActionSelector = canCancel ? 0 : 1;
+
+        if (!canCancel) {
+            // 不可撤时，优先把焦点给“返回”，避免 Tab 切换焦点的需求。
+            closeButton->TakeFocus();
+        }
+
+        std::string displayId = order.clOrdID;
+        if (displayId.size() > 24) {
+            displayId = displayId.substr(displayId.size() - 24);
+        }
+
+        auto details = vbox({
+            hbox({text("合约: "), text(order.symbol) | bold}),
+            hbox({text("方向: "), text(order.side == "BUY" ? "BUY" : "SELL") | color(sideColor(order.side))}),
+            hbox({text("数量: "), text(formatQty(order.orderQty))}),
+            hbox({text("状态: "), text(orderStateText(order.state))}),
+            hbox({text("ClOrdID: "), text(displayId) | dim}),
+        });
+
+        auto tips = text(canCancel ? "确认要撤销该订单吗？" : "该订单不是挂单状态，无法撤单。") |
+                   (canCancel ? color(Color::White) : color(Color::GrayDark));
+
+        return window(
+            text(" 撤单确认 ") | bold,
+            vbox({
+                details,
+                separator(),
+                tips,
+                separator(),
+                hbox({
+                    cancelActionTab->Render(),
+                    text(" "),
+                    closeButton->Render(),
+                }),
+            }) | size(WIDTH, GREATER_THAN, 48));
+    });
+
+    return Modal(withEvents, dialog, &listState->showCancelDialog);
 }
 
 Component OrderPanelComponent(

@@ -21,6 +21,11 @@ struct OrderListState {
     int selectedIndex = 0;
     std::string selectedClOrdID;
     size_t lastOrderCount = 0;
+
+    /// 是否显示“撤单确认”弹窗（订单列表内 Modal）。
+    bool showCancelDialog = false;
+    /// 弹窗对应的订单 clOrdID（打开弹窗时冻结，避免选中变化导致错撤）。
+    std::string cancelDialogClOrdID;
 };
 
 /**
@@ -28,6 +33,7 @@ struct OrderListState {
  */
 ftxui::Component OrderListComponent(
     std::shared_ptr<OrderListState> listState,
+    std::shared_ptr<ClientApp> app,
     const std::shared_ptr<ClientState>& state);
 
 /**
