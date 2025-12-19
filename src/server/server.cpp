@@ -9,10 +9,13 @@
 #include <iostream>
 #include <csignal>
 
+#include <signal.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <fcntl.h>
+#include <cerrno>
+#include <system_error>
 
 #include "core/reactor.hpp"
 #include "base/thread_pool.hpp"
@@ -24,13 +27,98 @@
 
 namespace fix40 {
 
-// 初始化静态指针
-FixServer* FixServer::instance_for_signal_ = nullptr;
+volatile std::sig_atomic_t FixServer::last_signal_ = 0;
+volatile std::sig_atomic_t FixServer::signal_write_fd_ = -1;
+
+namespace {
+
+class ScopedFd final {
+public:
+    explicit ScopedFd(int fd = -1) noexcept : fd_(fd) {}
+    ~ScopedFd() { reset(); }
+
+    ScopedFd(const ScopedFd&) = delete;
+    ScopedFd& operator=(const ScopedFd&) = delete;
+
+    ScopedFd(ScopedFd&& other) noexcept : fd_(other.fd_) { other.fd_ = -1; }
+    ScopedFd& operator=(ScopedFd&& other) noexcept {
+        if (this == &other) return *this;
+        reset();
+        fd_ = other.fd_;
+        other.fd_ = -1;
+        return *this;
+    }
+
+    int get() const noexcept { return fd_; }
+    int release() noexcept {
+        int old = fd_;
+        fd_ = -1;
+        return old;
+    }
+    void reset(int fd = -1) noexcept {
+        if (fd_ != -1) {
+            ::close(fd_);
+        }
+        fd_ = fd;
+    }
+
+private:
+    int fd_;
+};
+
+bool set_nonblocking(int fd) {
+    int flags = ::fcntl(fd, F_GETFL, 0);
+    if (flags < 0) {
+        LOG() << "fcntl(F_GETFL) failed for fd=" << fd << " errno=" << errno;
+        return false;
+    }
+    if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
+        LOG() << "fcntl(F_SETFL,O_NONBLOCK) failed for fd=" << fd << " errno=" << errno;
+        return false;
+    }
+    return true;
+}
+
+using SignalHandlerFn = void (*)(int);
+
+bool install_signal_handler(int signum, SignalHandlerFn handler) {
+    struct sigaction sa {};
+    sa.sa_handler = handler;
+    sigemptyset(&sa.sa_mask);
+    // SA_RESTART：尽可能自动重启被中断的系统调用（避免 EINTR 传播到业务代码）
+    sa.sa_flags =
+#ifdef SA_RESTART
+        SA_RESTART;
+#else
+        0;
+#endif
+    if (::sigaction(signum, &sa, nullptr) != 0) {
+        LOG() << "sigaction failed for signal=" << signum << " errno=" << errno;
+        return false;
+    }
+    return true;
+}
+
+void ignore_signal(int signum) {
+    struct sigaction sa {};
+    sa.sa_handler = SIG_IGN;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    if (::sigaction(signum, &sa, nullptr) != 0) {
+        LOG() << "sigaction(SIG_IGN) failed for signal=" << signum << " errno=" << errno;
+    }
+}
+
+} // namespace
 
 void FixServer::signal_handler(int signum) {
-    LOG() << "\nCaught signal " << signum << ". Shutting down gracefully...";
-    if (instance_for_signal_ && instance_for_signal_->reactor_) {
-        instance_for_signal_->reactor_->stop();
+    // async-signal-safe: 只做最小操作（记录信号 + write self-pipe）
+    last_signal_ = signum;
+    const int fd = static_cast<int>(signal_write_fd_);
+    if (fd != -1) {
+        uint8_t b = 1;
+        ssize_t n = ::write(fd, &b, sizeof(b));
+        (void)n;
     }
 }
 
@@ -45,7 +133,19 @@ FixServer::FixServer(int port, int num_threads, Application* app)
         config.get_int("timing_wheel", "tick_interval_ms", 1000)
     );
 
-    instance_for_signal_ = this;
+    // self-pipe: 用于将 SIGINT/SIGTERM 从信号处理器安全地转发到 Reactor 线程
+    int pipefd[2] = {-1, -1};
+    if (::pipe(pipefd) != 0) {
+        throw std::runtime_error("Failed to create signal pipe");
+    }
+    ScopedFd pipe_read(pipefd[0]);
+    ScopedFd pipe_write(pipefd[1]);
+    if (!set_nonblocking(pipe_read.get()) || !set_nonblocking(pipe_write.get())) {
+        throw std::runtime_error("Failed to set signal pipe nonblocking");
+    }
+    signal_pipe_[0] = pipe_read.release();
+    signal_pipe_[1] = pipe_write.release();
+    signal_write_fd_ = signal_pipe_[1];
 
     // 设置驱动时钟轮的主定时器
     reactor_->add_timer(config.get_int("timing_wheel", "tick_interval_ms", 1000), [this]([[maybe_unused]] int timer_fd) {
@@ -66,7 +166,9 @@ FixServer::FixServer(int port, int num_threads, Application* app)
         throw std::runtime_error("setsockopt(SO_REUSEADDR) failed");
     }
 
-    fcntl(listen_fd_, F_SETFL, O_NONBLOCK);
+    if (!set_nonblocking(listen_fd_)) {
+        throw std::runtime_error("Failed to set listen fd nonblocking");
+    }
 
     sockaddr_in address{};
     address.sin_family = AF_INET;
@@ -90,14 +192,48 @@ FixServer::~FixServer() {
     if (reactor_ && reactor_->is_running()) {
         reactor_->stop();
     }
-    close(listen_fd_);
-    instance_for_signal_ = nullptr;
+    // 析构阶段不应再触发信号回调：先忽略信号，再将 write fd 置为无效，最后关闭管道。
+    ignore_signal(SIGINT);
+    ignore_signal(SIGTERM);
+    signal_write_fd_ = -1;
+    if (signal_pipe_[0] != -1) ::close(signal_pipe_[0]);
+    if (signal_pipe_[1] != -1) ::close(signal_pipe_[1]);
+    signal_pipe_[0] = -1;
+    signal_pipe_[1] = -1;
+    if (listen_fd_ != -1) ::close(listen_fd_);
+    listen_fd_ = -1;
     LOG() << "FixServer destroyed.";
 }
 
 void FixServer::start() {
-    signal(SIGINT, FixServer::signal_handler);
-    signal(SIGTERM, FixServer::signal_handler);
+    // 使用 sigaction 安装信号处理器（避免 signal 的实现差异）
+    install_signal_handler(SIGINT, &FixServer::signal_handler);
+    install_signal_handler(SIGTERM, &FixServer::signal_handler);
+
+    // 在 Reactor 线程里处理信号：drain pipe -> stop reactor（线程安全）
+    // 这里在 reactor_->run() 之前 add_fd 是安全的：Reactor 会在 run() 内部统一注册/激活监听。
+    reactor_->add_fd(signal_pipe_[0], [this](int fd) {
+        uint8_t buf[128];
+        while (true) {
+            ssize_t n = ::read(fd, buf, sizeof(buf));
+            if (n > 0) {
+                continue;
+            }
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                break;
+            }
+            if (n < 0) {
+                LOG() << "signal pipe read error errno=" << errno;
+            }
+            break;
+        }
+
+        const int signum = static_cast<int>(last_signal_);
+        LOG() << "\nCaught signal " << signum << ". Shutting down gracefully...";
+        if (reactor_) {
+            reactor_->stop();
+        }
+    });
 
     // 将服务器端口 fd 添入 reactor 以接受新连接
     reactor_->add_fd(listen_fd_, [this](int) {
@@ -125,6 +261,7 @@ void FixServer::start() {
     // --- 优雅关闭逻辑 ---
     LOG() << "Reactor stopped. Closing listener and shutting down sessions...";
     reactor_->remove_fd(listen_fd_);
+    reactor_->remove_fd(signal_pipe_[0]);
 
     // 安全地获取将要关闭的连接
     std::vector<std::shared_ptr<Connection>> conns_to_shutdown;
@@ -157,7 +294,7 @@ void FixServer::start() {
 }
 
 void FixServer::on_new_connection(int fd) {
-    fcntl(fd, F_SETFL, O_NONBLOCK);
+    set_nonblocking(fd);
     
     // 计算这个连接绑定到哪个工作线程
     size_t thread_index = static_cast<size_t>(fd) % worker_pool_->get_thread_count();

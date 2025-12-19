@@ -60,6 +60,8 @@ public:
     std::vector<StoredMessage> loadMessages(
         const std::string& senderCompID, const std::string& targetCompID,
         int beginSeqNum, int endSeqNum) override;
+    bool deleteMessagesForSession(
+        const std::string& senderCompID, const std::string& targetCompID) override;
     bool deleteMessagesOlderThan(int64_t timestamp) override;
 
     // 账户存储

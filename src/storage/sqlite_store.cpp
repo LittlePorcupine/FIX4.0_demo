@@ -710,6 +710,26 @@ bool SqliteStore::deleteMessagesOlderThan(int64_t timestamp) {
     return rc == SQLITE_DONE;
 }
 
+bool SqliteStore::deleteMessagesForSession(const std::string& senderCompID, const std::string& targetCompID) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return false;
+
+    const char* sql = "DELETE FROM messages WHERE sender_comp_id = ? AND target_comp_id = ?";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, senderCompID.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, targetCompID.c_str(), -1, SQLITE_TRANSIENT);
+
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    return rc == SQLITE_DONE;
+}
+
 // =============================================================================
 // 辅助函数：提取 Account 和 Position
 // =============================================================================

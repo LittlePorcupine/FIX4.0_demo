@@ -17,6 +17,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <map>
 
 #include "fix/fix_codec.hpp"
 #include "fix/application.hpp"
@@ -472,6 +473,17 @@ private:
      */
     void internal_send(const std::string& raw_msg);
 
+    /**
+     * @brief 按序处理暂存的入站消息
+     *
+     * 当检测到 MsgSeqNum gap（收到未来序列号的消息）时，会先发送 ResendRequest 并暂存消息。
+     * 当缺失消息补齐、或收到 SequenceReset-GapFill 推进 recvSeqNum 后，调用此方法即可继续
+     * 投递暂存消息，保证回调到状态机/应用层的顺序是单调递增的。
+     *
+     * @note 必须在持有 state_mutex_ 的情况下调用。
+     */
+    void drain_pending_inbound_locked();
+
     int heartBtInt;                  ///< 心跳间隔（秒）
     const int minHeartBtInt_;        ///< 最小心跳间隔
     const int maxHeartBtInt_;        ///< 最大心跳间隔
@@ -486,6 +498,11 @@ private:
     int recvSeqNum = 1;  ///< 期望接收的序列号
     std::chrono::steady_clock::time_point lastRecv; ///< 最后接收时间
     std::chrono::steady_clock::time_point lastSend; ///< 最后发送时间
+
+    /// 暂存的入站消息（用于处理 MsgSeqNum gap），按序列号排序
+    std::map<int, FixMessage> pending_inbound_;
+    /// 最近一次发送的 ResendRequest 的 EndSeqNo（0 表示未发起/已完成）
+    int last_resend_request_end_ = 0;
 
     TimingWheel* timing_wheel_ = nullptr;  ///< 时间轮指针
     TimerTaskId timer_task_id_ = INVALID_TIMER_ID; ///< 定时任务 ID

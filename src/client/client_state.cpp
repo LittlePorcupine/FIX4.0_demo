@@ -353,7 +353,13 @@ void ClientState::addMessage(const std::string& msg) {
         auto now = std::chrono::system_clock::now();
         auto time = std::chrono::system_clock::to_time_t(now);
         std::ostringstream oss;
-        oss << std::put_time(std::localtime(&time), "%H:%M:%S") << " " << msg;
+        std::tm tm_buf{};
+#if defined(_WIN32)
+        localtime_s(&tm_buf, &time);
+#else
+        localtime_r(&time, &tm_buf);
+#endif
+        oss << std::put_time(&tm_buf, "%H:%M:%S") << " " << msg;
         messages_.push_back(oss.str());
         // 保留最近 100 条消息
         if (messages_.size() > 100) {

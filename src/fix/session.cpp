@@ -275,11 +275,15 @@ void Session::on_message_received(const FixMessage& msg) {
     const int msg_seq_num = msg.get_int(tags::MsgSeqNum);
     const std::string msg_type = msg.get_string(tags::MsgType);
 
-    // Logon 属于会话层握手消息：在 Disconnected 阶段不做严格的序列号校验，
-    // 以便服务端在解析出真实客户端 CompID 后，从持久化存储恢复正确的 recvSeqNum/sendSeqNum。
-    // 否则重连时客户端可能发送较大的 MsgSeqNum（按上次会话继续），会被误判为 gap 并断开。
-    if (msg_type == "A" && dynamic_cast<DisconnectedState*>(currentState_.get()) != nullptr) {
+    // Logon 属于会话层握手消息：
+    // - Disconnected：服务端需要先从 Logon 解析出真实 clientCompID，再从 store 恢复/对齐序列号；
+    // - LogonSent：客户端等待 LogonAck，此时服务端可能按历史会话继续序列号。
+    // 因此在握手阶段不做严格的序列号校验，由状态机负责对齐 recvSeqNum。
+    if (msg_type == "A" &&
+        (dynamic_cast<DisconnectedState*>(currentState_.get()) != nullptr ||
+         dynamic_cast<LogonSentState*>(currentState_.get()) != nullptr)) {
         currentState_->onMessageReceived(*this, msg);
+        drain_pending_inbound_locked();
         return;
     }
     
@@ -287,23 +291,33 @@ void Session::on_message_received(const FixMessage& msg) {
     if (msg_type == "4") {
         // SequenceReset 消息需要特殊处理，不检查序列号
         currentState_->onMessageReceived(*this, msg);
+        drain_pending_inbound_locked();
         return;
     }
     
     // 检查序列号
     if (msg_seq_num > recvSeqNum) {
-        // 检测到序列号 gap，发送 ResendRequest
-        LOG() << "Sequence number gap detected. Expected: " << recvSeqNum 
-              << ", Got: " << msg_seq_num << ". Sending ResendRequest.";
-        
-        // 发送 ResendRequest 请求重传缺失的消息
-        send_resend_request(recvSeqNum, msg_seq_num - 1);
-        
-        // 暂存当前消息，等待重传完成后处理
-        // 注意：简化实现中，我们先处理当前消息，实际生产环境应该排队
-        // 这里我们选择断开连接，让对方重新发送
-        perform_shutdown("Sequence number gap detected. Expected: " + std::to_string(recvSeqNum) + 
-                        " Got: " + std::to_string(msg_seq_num) + ". ResendRequest sent.");
+        // 检测到序列号 gap：
+        // - 发送 ResendRequest 请求补齐缺失消息；
+        // - 暂存“未来序列号”的消息，等待缺失补齐或 GapFill 推进序列号后再按序投递。
+        LOG() << "Sequence number gap detected. Expected: " << recvSeqNum
+              << ", Got: " << msg_seq_num << ". Sending ResendRequest and buffering message.";
+
+        const int end_seq_no = msg_seq_num - 1;
+        const int begin_seq_no = std::max(recvSeqNum, last_resend_request_end_ + 1);
+        if (end_seq_no >= begin_seq_no) {
+            send_resend_request(begin_seq_no, end_seq_no);
+            last_resend_request_end_ = std::max(last_resend_request_end_, end_seq_no);
+        }
+
+        // 暂存当前消息（避免覆盖同 seq 的重复到达）
+        constexpr size_t kMaxPendingInbound = 10000;
+        if (pending_inbound_.size() >= kMaxPendingInbound) {
+            perform_shutdown("Too many buffered inbound messages (" +
+                             std::to_string(pending_inbound_.size()) + ").");
+            return;
+        }
+        pending_inbound_.try_emplace(msg_seq_num, msg);
         return;
     } else if (msg_seq_num < recvSeqNum) {
         // 收到的序列号小于期望值
@@ -321,6 +335,40 @@ void Session::on_message_received(const FixMessage& msg) {
     
     // 序列号正确，正常处理
     currentState_->onMessageReceived(*this, msg);
+    drain_pending_inbound_locked();
+}
+
+void Session::drain_pending_inbound_locked() {
+    // 仅在会话正常运行时处理缓冲消息
+    if (!running_) return;
+
+    // 若 recvSeqNum 被 SequenceReset-GapFill 等推进，之前缓存的“更低 seq”消息已不再可用，
+    // 必须丢弃，否则会造成缓存泄漏或错误重放。
+    if (!pending_inbound_.empty()) {
+        pending_inbound_.erase(pending_inbound_.begin(), pending_inbound_.lower_bound(recvSeqNum));
+    }
+
+    while (true) {
+        auto it = pending_inbound_.find(recvSeqNum);
+        if (it == pending_inbound_.end()) {
+            break;
+        }
+
+        FixMessage next = it->second;
+        pending_inbound_.erase(it);
+
+        // 递归进入状态机处理（会话层会根据 MsgType 自行递增 recvSeqNum）
+        currentState_->onMessageReceived(*this, next);
+        if (!running_) {
+            pending_inbound_.clear();
+            break;
+        }
+    }
+
+    // gap 已被补齐（或通过 GapFill 推进到更高序列），清理 resend 追踪状态
+    if (pending_inbound_.empty() && last_resend_request_end_ > 0 && recvSeqNum > last_resend_request_end_) {
+        last_resend_request_end_ = 0;
+    }
 }
 
 void Session::on_timer_check() {
@@ -470,6 +518,8 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
     // 此逻辑主要用于服务器端。
     if (msg.get_string(tags::MsgType) == "A") {
         if (context.senderCompID == "SERVER") {
+            const bool reset_seq = msg.has(tags::ResetSeqNumFlag) &&
+                                   msg.get_string(tags::ResetSeqNumFlag) == "Y";
             // 从 Logon 消息中提取客户端标识
             // FIX 协议中，客户端发送的 Logon 消息的 SenderCompID 是客户端的标识
             if (!msg.has(tags::SenderCompID)) {
@@ -501,8 +551,16 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
             context.set_target_comp_id(clientCompID);
 
             // 现在已具备稳定的 (senderCompID, targetCompID) key，可以从 store 恢复序列号。
-            if (context.get_store()) {
-                context.restore_session_state();
+            if (auto* store = context.get_store()) {
+                if (reset_seq) {
+                    // 若客户端请求重置序列号，需要清理该方向已持久化的历史消息，
+                    // 否则序列号重置后会出现重复 seq_num 的旧消息干扰重传。
+                    store->deleteMessagesForSession(context.senderCompID, clientCompID);
+                    context.set_send_seq_num(1);
+                    context.set_recv_seq_num(1);
+                } else {
+                    context.restore_session_state();
+                }
             }
 
             // Logon 消息本身已经被消费：将期望接收序列号推进到当前 MsgSeqNum + 1。
@@ -524,7 +582,12 @@ void DisconnectedState::onMessageReceived(Session& context, const FixMessage& ms
                 
                 context.set_heart_bt_int(client_hb_interval); // 采用客户端的心跳值
                 
-                auto logon_ack = create_logon_message(context.senderCompID, context.targetCompID, 1, context.get_heart_bt_int());
+                auto logon_ack = create_logon_message(
+                    context.senderCompID,
+                    context.targetCompID,
+                    1,
+                    context.get_heart_bt_int(),
+                    reset_seq);
                 context.send(logon_ack);
                 context.changeState(std::make_unique<EstablishedState>());
 
@@ -563,7 +626,14 @@ void DisconnectedState::onSessionStart(Session& context) {
     
     if (isClient) {
         // 客户端发起 Logon
-        auto logon_msg = create_logon_message(context.senderCompID, context.targetCompID, 1, context.get_heart_bt_int());
+        // 若客户端未启用持久化（store 为空），则请求重置序列号，避免服务端按旧会话序列号发送导致握手失败。
+        const bool reset_seq = (context.get_store() == nullptr);
+        auto logon_msg = create_logon_message(
+            context.senderCompID,
+            context.targetCompID,
+            1,
+            context.get_heart_bt_int(),
+            reset_seq);
         context.send(logon_msg);
         context.changeState(std::make_unique<LogonSentState>());
         LOG() << "Client session started, sending Logon to SERVER.";
@@ -577,7 +647,9 @@ void DisconnectedState::onLogoutRequest([[maybe_unused]] Session& context, [[may
 // --- 已发送 Logon 状态 ---
 void LogonSentState::onMessageReceived(Session& context, const FixMessage& msg) {
     if (msg.get_string(tags::MsgType) == "A") {
-        context.increment_recv_seq_num();
+        // LogonAck 的 MsgSeqNum 可能来自历史会话（双方启用持久化时会继续序列号），
+        // 此处以对端的 MsgSeqNum 为准对齐期望接收序列号。
+        context.set_recv_seq_num(msg.get_int(tags::MsgSeqNum) + 1);
         LOG() << "Logon confirmation received. Session established.";
         context.changeState(std::make_unique<EstablishedState>());
 
