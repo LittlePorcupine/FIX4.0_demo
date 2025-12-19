@@ -116,43 +116,17 @@ RC_PARAMS="seed=12345" ./tests/build/unit_tests [rapidcheck]
 cmake -B build .
 cmake --build build
 
-# 运行端到端测试
-./tests/e2e/test_session_flow.sh    # 单客户端会话流程
-./tests/e2e/test_multi_client.sh    # 多客户端并发会话
-./tests/e2e/test_trading.sh         # 单客户端交易流程
-./tests/e2e/test_multi_trading.sh   # 多客户端并发交易
+# 运行端到端测试（当前提供开/平仓流程）
+./tests/e2e/test_open_close.sh
 ```
 
 ### 测试内容
 
-**test_session_flow.sh** - 会话层测试
-- 服务端启动和监听
-- 客户端连接和 Logon 握手
-- 会话建立确认
-- 心跳消息发送和接收
-- 连接断开和资源清理
-
-**test_multi_client.sh** - 并发会话测试
-- 5 个客户端同时连接
-- 所有会话并发建立
-- 连接分布到多个工作线程
-- 所有客户端心跳交换
-- 所有会话正确清理
-
-**test_trading.sh** - 单客户端交易测试
-- NewOrderSingle 消息发送和接收
-- 订单添加到 OrderBook
-- 买卖订单撮合成交
-- OrderCancelRequest 撤单处理
-- ExecutionReport 回报发送
-- 订单状态验证 (New/PartiallyFilled/Filled/Canceled)
-
-**test_multi_trading.sh** - 多客户端并发交易测试
-- 3 个客户端同时发送订单
-- 跨客户端订单撮合
-- 并发撤单处理
-- ExecutionReport 正确路由到各客户端
-- 多种订单状态并存验证
+**test_open_close.sh** - 开/平仓流程测试
+- 启动服务端并建立客户端会话
+- 下单开仓并触发成交
+- 下单平仓并触发成交
+- 检查资金/持仓/订单状态的基本一致性
 
 测试使用 `config_test.ini` 配置文件，心跳间隔设为 3 秒以加速测试。
 
