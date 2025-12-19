@@ -70,25 +70,40 @@ AccountInfo ClientState::getAccount() const {
 // ============================================================================
 
 void ClientState::updatePosition(const PositionInfo& pos) {
+    bool updated = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = std::find_if(positions_.begin(), positions_.end(),
             [&](const PositionInfo& p) { return p.instrumentId == pos.instrumentId; });
         if (it != positions_.end()) {
-            // 合并更新：如果新数据有值则更新，否则保留旧值
-            if (pos.longPosition > 0 || pos.shortPosition > 0) {
-                it->longPosition = pos.longPosition;
-                it->shortPosition = pos.shortPosition;
+            // 合并更新：推送消息可能包含0数量（用于“平到0后清空持仓”）。
+            // 仅当 quantitiesValid=true 时才认为数量字段可用（即使为0也要应用/删除）。
+            if (pos.quantitiesValid && pos.longPosition == 0 && pos.shortPosition == 0) {
+                // 持仓已清空：移除该合约持仓，避免 UI 停留在平仓前的最后一刻。
+                positions_.erase(it);
+                updated = true;
+            } else {
+                if (pos.quantitiesValid) {
+                    it->longPosition = pos.longPosition;
+                    it->shortPosition = pos.shortPosition;
+                }
+                if (pos.longAvgPrice > 0) it->longAvgPrice = pos.longAvgPrice;
+                if (pos.shortAvgPrice > 0) it->shortAvgPrice = pos.shortAvgPrice;
+                // 盈亏始终更新（可能为负）
+                it->profit = pos.profit;
+                updated = true;
             }
-            if (pos.longAvgPrice > 0) it->longAvgPrice = pos.longAvgPrice;
-            if (pos.shortAvgPrice > 0) it->shortAvgPrice = pos.shortAvgPrice;
-            // 盈亏始终更新（可能为负）
-            it->profit = pos.profit;
         } else {
-            positions_.push_back(pos);
+            // 新增持仓：若推送的是“0数量清空”则忽略即可。
+            if (!(pos.quantitiesValid && pos.longPosition == 0 && pos.shortPosition == 0)) {
+                positions_.push_back(pos);
+                updated = true;
+            }
         }
     }
-    notifyStateChange();
+    if (updated) {
+        notifyStateChange();
+    }
 }
 
 void ClientState::setPositions(const std::vector<PositionInfo>& positions) {

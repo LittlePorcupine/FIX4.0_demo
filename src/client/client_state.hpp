@@ -55,6 +55,7 @@ struct PositionInfo {
     int64_t shortPosition = 0;
     double shortAvgPrice = 0.0;
     double profit = 0.0;
+    bool quantitiesValid = false; ///< 是否包含多空数量字段（允许数量为0时用于清空持仓）
 };
 
 /**

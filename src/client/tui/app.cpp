@@ -146,7 +146,16 @@ Component TuiApp::createMainComponent() {
     });
     
     // 添加全局快捷键
-    auto withShortcuts = CatchEvent(focusManager, [this](Event event) {
+    auto withShortcuts = CatchEvent(focusManager, [this, searchBox, orderPanel](Event event) {
+        // 当光标在“合约搜索/下单”这类文本输入区域时，不拦截字符键：
+        // 用户输入的 'r'/'q' 应当进入输入框，而不是触发全局刷新/退出。
+        if ((searchBox && searchBox->Focused()) || (orderPanel && orderPanel->Focused())) {
+            if (event == Event::Character('q') || event == Event::Character('Q') ||
+                event == Event::Character('r') || event == Event::Character('R')) {
+                return false; // 交给子组件（Input）处理
+            }
+        }
+
         // Q 或 Escape 退出
         if (event == Event::Character('q') || event == Event::Character('Q')) {
             requestExit();

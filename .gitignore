@@ -3,6 +3,7 @@
 
 # Build artifacts
 build/
+build-tests/
 
 # macOS specific
 .DS_Store

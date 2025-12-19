@@ -201,6 +201,7 @@ TEST_CASE("PositionManager closePosition 全部平仓", "[position_manager][unit
     PositionManager mgr;
     
     mgr.openPosition("user001", "IF2601", OrderSide::BUY, 2, 4000.0, 240000.0);
+    mgr.updateProfit("user001", "IF2601", 4050.0, 300);
     
     double profit = mgr.closePosition("user001", "IF2601", OrderSide::SELL, 2, 4050.0, 300);
     
@@ -210,6 +211,8 @@ TEST_CASE("PositionManager closePosition 全部平仓", "[position_manager][unit
     auto pos = mgr.getPosition("user001", "IF2601");
     REQUIRE(pos->longPosition == 0);
     REQUIRE(pos->longAvgPrice == 0.0);
+    // 全部平仓后，该方向的浮动盈亏应归零，避免残留旧值影响账户总浮盈。
+    REQUIRE(pos->longProfit == Approx(0.0));
 }
 
 TEST_CASE("PositionManager updateProfit 更新浮动盈亏", "[position_manager][unit]") {
