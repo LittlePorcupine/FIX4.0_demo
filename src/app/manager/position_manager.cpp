@@ -171,11 +171,15 @@ double PositionManager::closePosition(const std::string& accountId,
         if (pos.longPosition <= 0) {
             pos.longPosition = 0;
             pos.longAvgPrice = 0.0;
+            pos.longProfit = 0.0;
             pos.longMargin = 0.0;
         } else {
             // 按比例减少保证金：释放的保证金 = 原保证金 × (平仓量 / 原持仓量)
             double marginToRelease = pos.longMargin * (static_cast<double>(volume) / originalPosition);
             pos.longMargin -= marginToRelease;
+            // 浮动盈亏与持仓量成比例：若当前 longProfit 基于某个最新价计算过，平仓后按剩余仓位缩放，
+            // 避免出现“持仓量减少但浮动盈亏仍保持旧值”的情况。
+            pos.longProfit *= (static_cast<double>(pos.longPosition) / originalPosition);
         }
     } else {
         // 平空头（买入平仓）
@@ -190,11 +194,13 @@ double PositionManager::closePosition(const std::string& accountId,
         if (pos.shortPosition <= 0) {
             pos.shortPosition = 0;
             pos.shortAvgPrice = 0.0;
+            pos.shortProfit = 0.0;
             pos.shortMargin = 0.0;
         } else {
             // 按比例减少保证金：释放的保证金 = 原保证金 × (平仓量 / 原持仓量)
             double marginToRelease = pos.shortMargin * (static_cast<double>(volume) / originalPosition);
             pos.shortMargin -= marginToRelease;
+            pos.shortProfit *= (static_cast<double>(pos.shortPosition) / originalPosition);
         }
     }
     

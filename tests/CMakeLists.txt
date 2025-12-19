@@ -89,6 +89,7 @@ add_executable(unit_tests
     unit/test_server_session_store_restore.cpp
     unit/test_reset_seqnum_flag.cpp
     unit/test_session_seq_gap_buffering.cpp
+    unit/test_close_profit_push_and_merge.cpp
     # RapidCheck 属性测试
     unit/test_rapidcheck_integration.cpp
     unit/test_account.cpp
@@ -102,6 +103,7 @@ add_executable(unit_tests
     unit/test_open_close_position.cpp
     unit/test_client_state.cpp
     unit/test_client_order_list.cpp
+    unit/test_client_position_updates.cpp
 )
 
 target_link_libraries(unit_tests PRIVATE fix_engine_test)

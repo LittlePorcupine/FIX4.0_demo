@@ -377,8 +377,10 @@ void ClientApp::handlePositionResponse(const FixMessage& msg) {
 }
 
 void ClientApp::handleAccountUpdate(const FixMessage& msg) {
-    // 与 handleBalanceResponse 相同，但不触发额外的查询
-    AccountInfo info;
+    // 与 handleBalanceResponse 基本相同，但不触发额外的查询。
+    // 注意：U5 作为推送消息，可能只包含部分字段；因此这里以当前状态为基准做“合并更新”，
+    // 避免缺失字段被默认值（例如 closeProfit=0）覆盖。
+    AccountInfo info = state_->getAccount();
     
     auto safeStod = [](const std::string& s) -> double {
         try { return std::stod(s); } catch (...) { return 0.0; }
@@ -422,6 +424,7 @@ void ClientApp::handlePositionUpdate(const FixMessage& msg) {
     if (msg.has(tags::InstrumentID)) {
         pos.instrumentId = msg.get_string(tags::InstrumentID);
     }
+    pos.quantitiesValid = msg.has(tags::LongPosition) || msg.has(tags::ShortPosition);
     if (msg.has(tags::LongPosition)) {
         pos.longPosition = msg.get_int(tags::LongPosition);
     }

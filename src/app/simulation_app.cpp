@@ -481,6 +481,15 @@ void SimulationApp::handleFill(const std::string& accountId, const ExecutionRepo
               << " margin=" << margin
               << " frozenReleased=" << frozenMargin;
     }
+
+    // 3. 成交后立即刷新该账户的浮动盈亏并推送（reason=2=成交），避免 UI 依赖下一跳行情刷新。
+    // 使用 report.lastPx 作为最新价：当无行情驱动更新时，至少保证“平仓后持仓变为0”的刷新能发生。
+    positionManager_.updateProfit(accountId, report.symbol, report.lastPx, instrument->volumeMultiple);
+    const double totalProfit = positionManager_.getTotalProfit(accountId);
+    accountManager_.updatePositionProfit(accountId, totalProfit);
+
+    pushAccountUpdate(accountId, 2);
+    pushPositionUpdate(accountId, report.symbol, 2);
 }
 
 void SimulationApp::handleReject(const std::string& accountId, const ExecutionReport& report) {
@@ -923,10 +932,16 @@ void SimulationApp::pushAccountUpdate(const std::string& userId, int reason) {
     
     oss.str(""); oss << account.positionProfit;
     msg.set(tags::PositionProfit, oss.str());
-    
+
+    oss.str(""); oss << account.closeProfit;
+    msg.set(tags::CloseProfit, oss.str());
+
     oss.str(""); oss << account.getDynamicEquity();
     msg.set(tags::DynamicEquity, oss.str());
-    
+
+    oss.str(""); oss << account.getRiskRatio();
+    msg.set(tags::RiskRatio, oss.str());
+
     // 发送推送
     if (!sessionManager_.sendMessage(*sessionOpt, msg)) {
         // 用户可能已离线/会话已不可用：推送属于“尽力而为”，失败时静默丢弃即可。
