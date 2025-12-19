@@ -14,6 +14,7 @@
 #include <memory>
 #include <atomic>
 #include <string>
+#include <cstdint>
 
 namespace fix40::client {
 
@@ -126,6 +127,7 @@ private:
     std::shared_ptr<ClientState> state_;
     std::weak_ptr<Session> session_;
     std::string userId_;
+    int64_t clOrdIdPrefixMs_ = 0; ///< 本次运行的 ClOrdID 前缀时间戳（毫秒），用于跨重启去重
     std::atomic<uint64_t> orderIdCounter_{1};
     std::atomic<uint64_t> requestIdCounter_{1};
 };

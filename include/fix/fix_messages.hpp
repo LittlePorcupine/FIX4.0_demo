@@ -33,7 +33,8 @@ namespace fix40 {
 inline FixMessage create_logon_message(const std::string& sender,
                                        const std::string& target,
                                        int seq_num = 1,
-                                       int heart_bt = Config::instance().get_int("fix_session", "default_heartbeat_interval", 30)) {
+                                       int heart_bt = Config::instance().get_int("fix_session", "default_heartbeat_interval", 30),
+                                       bool reset_seq_num = false) {
     FixMessage logon;
     logon.set(tags::MsgType, "A");
     logon.set(tags::EncryptMethod, "0");
@@ -41,6 +42,9 @@ inline FixMessage create_logon_message(const std::string& sender,
     logon.set(tags::SenderCompID, sender);
     logon.set(tags::TargetCompID, target);
     logon.set(tags::MsgSeqNum, seq_num);
+    if (reset_seq_num) {
+        logon.set(tags::ResetSeqNumFlag, "Y");
+    }
     return logon;
 }
 

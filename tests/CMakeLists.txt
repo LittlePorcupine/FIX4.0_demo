@@ -20,6 +20,7 @@ endif()
 # 添加父目录的 include 路径
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../src/client)
 
 # =============================================================================
 # RapidCheck 属性测试库 (通过 FetchContent 获取)
@@ -58,6 +59,8 @@ add_library(fix_engine_test STATIC
     ../src/app/manager/risk_manager.cpp
     ../src/market/mock_md_adapter.cpp
     ../src/storage/sqlite_store.cpp
+    ../src/client/client_state.cpp
+    ../src/client/client_app.cpp
 )
 target_include_directories(fix_engine_test PUBLIC ../include)
 target_link_libraries(fix_engine_test PUBLIC SQLite::SQLite3)
@@ -84,6 +87,8 @@ add_executable(unit_tests
     unit/test_simulation_app_persistence.cpp
     unit/test_order_history_query.cpp
     unit/test_server_session_store_restore.cpp
+    unit/test_reset_seqnum_flag.cpp
+    unit/test_session_seq_gap_buffering.cpp
     # RapidCheck 属性测试
     unit/test_rapidcheck_integration.cpp
     unit/test_account.cpp
@@ -96,6 +101,7 @@ add_executable(unit_tests
     unit/test_matching_engine.cpp
     unit/test_open_close_position.cpp
     unit/test_client_state.cpp
+    unit/test_client_order_list.cpp
 )
 
 target_link_libraries(unit_tests PRIVATE fix_engine_test)

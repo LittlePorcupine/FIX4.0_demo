@@ -485,8 +485,10 @@ TEST_CASE("Session rejects message with wrong sequence number", "[session][state
     auto hb = create_heartbeat_with_seq("SERVER", "CLIENT", 5);
     session->on_message_received(hb);
     
-    REQUIRE(shutdown_called);
-    REQUIRE_FALSE(session->is_running());
+    // FIX 断线恢复语义：遇到 gap 时应发送 ResendRequest 并缓冲未来消息，而不是直接断开。
+    REQUIRE_FALSE(shutdown_called);
+    REQUIRE(session->is_running());
+    REQUIRE(session->get_recv_seq_num() == 2);
 }
 
 // ============================================================================

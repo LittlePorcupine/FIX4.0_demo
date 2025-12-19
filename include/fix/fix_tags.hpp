@@ -54,6 +54,10 @@ constexpr int EncryptMethod = 98;
 /// @brief 心跳间隔（秒）
 constexpr int HeartBtInt = 108;
 
+/// @brief 重置序列号标志 (Reset Sequence Number Flag)
+/// Y = 双方都将会话序列号重置为 1（通常在一方丢失持久化状态时使用）
+constexpr int ResetSeqNumFlag = 141;
+
 /// @brief 测试请求标识符
 constexpr int TestReqID = 112;
 

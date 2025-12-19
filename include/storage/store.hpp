@@ -114,6 +114,20 @@ public:
     virtual std::vector<StoredMessage> loadMessages(
         const std::string& senderCompID, const std::string& targetCompID,
         int beginSeqNum, int endSeqNum) = 0;
+
+    /**
+     * @brief 删除指定会话方向的所有已持久化消息
+     *
+     * 典型用途：处理 Logon 的 ResetSeqNumFlag(141)=Y 时，清理旧会话的消息记录，
+     * 避免序列号重置后出现同一 seq_num 的重复历史消息干扰重传。
+     *
+     * @param senderCompID 发送方 CompID
+     * @param targetCompID 接收方 CompID
+     * @return 删除成功返回 true，失败返回 false
+     */
+    virtual bool deleteMessagesForSession(
+        const std::string& senderCompID, const std::string& targetCompID) = 0;
+
     virtual bool deleteMessagesOlderThan(int64_t timestamp) = 0;
 
     // =========================================================================

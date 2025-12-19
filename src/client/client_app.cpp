@@ -15,6 +15,8 @@ namespace fix40::client {
 ClientApp::ClientApp(std::shared_ptr<ClientState> state, const std::string& userId)
     : state_(std::move(state))
     , userId_(userId) {
+    clOrdIdPrefixMs_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
 // ============================================================================
@@ -541,7 +543,11 @@ void ClientApp::handleOrderHistoryResponse(const FixMessage& msg) {
 
 std::string ClientApp::generateClOrdID() {
     std::ostringstream oss;
-    oss << userId_ << "-" << std::setfill('0') << std::setw(6) << orderIdCounter_++;
+    // ClOrdID 必须唯一：如果仅用自增计数器，客户端重启后计数器会从 1 重新开始，
+    // 会导致服务端/客户端用相同 ClOrdID 覆盖历史订单（orders_ map 也会覆盖）。
+    // 这里加入“本次运行启动时间(ms)”前缀，并使用 fetch_add 确保在 C++17 下行为明确。
+    const uint64_t seq = orderIdCounter_.fetch_add(1, std::memory_order_relaxed);
+    oss << userId_ << "-" << clOrdIdPrefixMs_ << "-" << std::setfill('0') << std::setw(6) << seq;
     return oss.str();
 }
 

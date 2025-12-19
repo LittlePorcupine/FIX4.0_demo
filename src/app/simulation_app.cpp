@@ -888,7 +888,6 @@ void SimulationApp::pushAccountUpdate(const std::string& userId, int reason) {
     // 查找用户对应的 Session
     auto sessionOpt = findSessionByUserId(userId);
     if (!sessionOpt) {
-        LOG() << "[SimulationApp] Cannot push account update: session not found for " << userId;
         return;
     }
     
@@ -930,7 +929,7 @@ void SimulationApp::pushAccountUpdate(const std::string& userId, int reason) {
     
     // 发送推送
     if (!sessionManager_.sendMessage(*sessionOpt, msg)) {
-        LOG() << "[SimulationApp] Failed to push account update to " << userId;
+        // 用户可能已离线/会话已不可用：推送属于“尽力而为”，失败时静默丢弃即可。
     }
 }
 
@@ -975,7 +974,7 @@ void SimulationApp::pushPositionUpdate(const std::string& userId, const std::str
     
     // 发送推送
     if (!sessionManager_.sendMessage(*sessionOpt, msg)) {
-        LOG() << "[SimulationApp] Failed to push position update to " << userId;
+        // 用户可能已离线/会话已不可用：推送属于“尽力而为”，失败时静默丢弃即可。
     }
 }
 
