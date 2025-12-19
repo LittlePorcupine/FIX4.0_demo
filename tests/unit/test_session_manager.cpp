@@ -99,6 +99,25 @@ TEST_CASE("SessionManager - Basic operations", "[session_manager]") {
 
         REQUIRE(manager.getSessionCount() == 0);
     }
+
+    SECTION("forEachSession uses snapshot semantics") {
+        auto session1 = std::make_shared<Session>("CLIENT1", "SERVER", 30, [](){});
+        auto session2 = std::make_shared<Session>("CLIENT2", "SERVER", 30, [](){});
+        manager.registerSession(session1);
+        manager.registerSession(session2);
+
+        int count = 0;
+        manager.forEachSession([&](const SessionID&, std::shared_ptr<Session>) {
+            ++count;
+            // 在遍历期间注册新会话：本轮遍历不应访问到它。
+            auto session3 = std::make_shared<Session>("CLIENT3", "SERVER", 30, [](){});
+            manager.registerSession(session3);
+        });
+
+        REQUIRE(count == 2);
+        REQUIRE(manager.hasSession(SessionID("CLIENT3", "SERVER")));
+        REQUIRE(manager.getSessionCount() == 3);
+    }
 }
 
 TEST_CASE("SessionManager - sendMessage", "[session_manager]") {

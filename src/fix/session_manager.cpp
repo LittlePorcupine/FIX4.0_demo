@@ -93,6 +93,7 @@ void SessionManager::forEachSession(
     }
 
     // 解锁后执行回调，避免回调内重入 SessionManager（例如 sendMessage/unregister）导致死锁。
+    // 语义说明：遍历使用 snapshot，因此回调执行期间新增/移除的 session 不会反映在本轮遍历中。
     for (const auto& [id, session] : snapshot) {
         callback(id, session);
     }
