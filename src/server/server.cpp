@@ -9,6 +9,7 @@
 #include <iostream>
 #include <csignal>
 
+#include <signal.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -78,12 +79,19 @@ bool set_nonblocking(int fd) {
     return true;
 }
 
-bool install_signal_handler(int signum) {
+using SignalHandlerFn = void (*)(int);
+
+bool install_signal_handler(int signum, SignalHandlerFn handler) {
     struct sigaction sa {};
-    sa.sa_handler = FixServer::signal_handler;
+    sa.sa_handler = handler;
     sigemptyset(&sa.sa_mask);
     // SA_RESTART：尽可能自动重启被中断的系统调用（避免 EINTR 传播到业务代码）
-    sa.sa_flags = SA_RESTART;
+    sa.sa_flags =
+#ifdef SA_RESTART
+        SA_RESTART;
+#else
+        0;
+#endif
     if (::sigaction(signum, &sa, nullptr) != 0) {
         LOG() << "sigaction failed for signal=" << signum << " errno=" << errno;
         return false;
@@ -199,8 +207,8 @@ FixServer::~FixServer() {
 
 void FixServer::start() {
     // 使用 sigaction 安装信号处理器（避免 signal 的实现差异）
-    install_signal_handler(SIGINT);
-    install_signal_handler(SIGTERM);
+    install_signal_handler(SIGINT, &FixServer::signal_handler);
+    install_signal_handler(SIGTERM, &FixServer::signal_handler);
 
     // 在 Reactor 线程里处理信号：drain pipe -> stop reactor（线程安全）
     // 这里在 reactor_->run() 之前 add_fd 是安全的：Reactor 会在 run() 内部统一注册/激活监听。
