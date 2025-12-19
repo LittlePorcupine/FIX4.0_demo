@@ -1,8 +1,6 @@
 #include "../catch2/catch.hpp"
 
-#define private public
 #include "app/simulation_app.hpp"
-#undef private
 #include "fix/fix_codec.hpp"
 #include "fix/fix_tags.hpp"
 #include "storage/sqlite_store.hpp"
@@ -11,6 +9,14 @@
 #include "client_state.hpp"
 
 using namespace fix40;
+
+namespace fix40 {
+struct SimulationAppTestAccess {
+    static void pushAccountUpdate(SimulationApp& app, const std::string& userId, int reason) {
+        app.pushAccountUpdate(userId, reason);
+    }
+};
+} // namespace fix40
 
 TEST_CASE("Server U5 push includes CloseProfit and client merges missing fields", "[account][close_profit]") {
     // --------------------------
@@ -29,7 +35,7 @@ TEST_CASE("Server U5 push includes CloseProfit and client merges missing fields"
     serverApp.getAccountManager().createAccount("CLIENT1", 1000000.0);
     REQUIRE(serverApp.getAccountManager().addCloseProfit("CLIENT1", 123.45));
 
-    serverApp.pushAccountUpdate("CLIENT1", 2);
+    SimulationAppTestAccess::pushAccountUpdate(serverApp, "CLIENT1", 2);
 
     auto messages = store.loadMessages("SERVER", "CLIENT1", 1, 100);
     REQUIRE_FALSE(messages.empty());

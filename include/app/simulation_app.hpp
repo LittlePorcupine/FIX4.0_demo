@@ -42,6 +42,7 @@ namespace fix40 {
 
 // 前向声明
 class IStore;
+struct SimulationAppTestAccess;
 
 /**
  * @class SimulationApp
@@ -260,6 +261,14 @@ public:
     Account getOrCreateAccount(const std::string& accountId, double initialBalance = 1000000.0);
 
 private:
+    /**
+     * @brief 单元测试访问器
+     *
+     * 仅用于单元测试访问内部实现细节（例如 pushAccountUpdate），避免在测试中使用
+     * `#define private public` 破坏标准库头文件的可见性/封装并导致编译失败。
+     */
+    friend struct SimulationAppTestAccess;
+
     /**
      * @brief 初始化各管理器
      * 
